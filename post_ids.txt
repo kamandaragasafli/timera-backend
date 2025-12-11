@@ -1,0 +1,77 @@
+﻿
+======================================================================
+POST IDs
+======================================================================
+
+Found 10 posts:
+
+1. Post ID:
+   817c2945-9cce-4534-be91-f803e54f0fee
+   Content: Trivasoft-un g╔Öl╔Öc╔Ök planlar─▒ v╔Ö h╔Öd╔Öfl╔Öri. Biz h╔Ö...
+   Status: approved
+   Has Image: Yes
+
+2. Post ID:
+   02b3025f-0535-4e07-b6e3-9e5b67223de2
+   Content: Trivasoft-un t╔Öqdim etdiyi digital marketinq d╔Örsi...
+   Status: approved
+   Has Image: Yes
+
+3. Post ID:
+   bfc91e59-53e6-4a34-88c0-b851152b5e34
+   Content: Trivasoft-da karyera imkanlar─▒. Biz h╔Ömi┼ƒ╔Ö yeni ta...
+   Status: approved
+   Has Image: Yes
+
+4. Post ID:
+   1d18d67d-4550-4e01-b2ea-695ad0ad1069
+   Content: Trivasoft-da biz birlikd╔Ö i┼ƒl╔Öm╔Öyi, birlikd╔Ö ├╢yr╔Ön...
+   Status: approved
+   Has Image: Yes
+
+5. Post ID:
+   a3521b51-3666-4856-81cf-b539a1d629cd
+   Content: Trivasoft-da biz h╔Ömi┼ƒ╔Ö m├╝┼ƒt╔Öri m╔Ömnuniyy╔Ötini bir...
+   Status: approved
+   Has Image: Yes
+
+6. Post ID:
+   db518aa0-0aea-4de2-a4f5-843601a1def4
+   Content: Trivasoft-da bizim ╔Ön b├╢y├╝k servisimiz komandam─▒zd...
+   Status: approved
+   Has Image: Yes
+
+7. Post ID:
+   3b934b12-7504-42ed-a507-72bd98045efc
+   Content: Trivasoft-da biz h╔Ömi┼ƒ╔Ö innovativ yana┼ƒmalar─▒ q╔Öbu...
+   Status: approved
+   Has Image: Yes
+
+8. Post ID:
+   dfb1f418-ffd1-41fc-9059-7162fe077c37
+   Content: Trivasoft AI xidm╔Ötl╔Öri, biznesinizin effektivliyi...
+   Status: approved
+   Has Image: Yes
+
+9. Post ID:
+   494bb2b9-b62c-4256-b248-48379546d94b
+   Content: Trivasoft t╔Ör╔Öfind╔Ön t╔Öqdim olunan y├╝ks╔Ök s╔Öviyy╔Öl...
+   Status: approved
+   Has Image: Yes
+
+10. Post ID:
+   e76669bc-6739-44cf-ae9c-5fb04df1754b
+   Content: Trivasoft t╔Ör╔Öfind╔Ön t╔Öqdim olunan ╔Ölaq╔Öli SMM xid...
+   Status: approved
+   Has Image: Yes
+   Image: post_images/750x750bb.jpeg
+
+======================================================================
+
+Test URLs (copy to browser):
+
+http://127.0.0.1:8000/api/posts/817c2945-9cce-4534-be91-f803e54f0fee/apply-branding/
+http://127.0.0.1:8000/api/posts/02b3025f-0535-4e07-b6e3-9e5b67223de2/apply-branding/
+http://127.0.0.1:8000/api/posts/bfc91e59-53e6-4a34-88c0-b851152b5e34/apply-branding/
+
+======================================================================
