@@ -1,7 +1,40 @@
 from rest_framework import serializers
+from rest_framework.fields import JSONField as DRFJSONField
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import authenticate
 from .models import User, BrandVoice, CompanyProfile
+
+
+class FlexibleJSONField(DRFJSONField):
+    """JSONField that accepts both JSON strings and already-parsed dict/list"""
+    
+    def to_internal_value(self, data):
+        """Accept dict/list directly without requiring JSON string"""
+        # If data is already a dict/list, return it directly (no validation needed)
+        if isinstance(data, (dict, list)):
+            return data
+        # If data is None, return None (allow_null=True handles this)
+        if data is None:
+            return None
+        # If data is empty string, return empty list/dict based on default
+        if isinstance(data, str) and not data.strip():
+            # Return default if set, otherwise empty list
+            from rest_framework.fields import empty
+            if hasattr(self, 'default') and self.default is not empty:
+                return self.default() if callable(self.default) else self.default
+            return []  # Default to empty list
+        
+        # For strings, parse as JSON
+        if isinstance(data, str):
+            import json
+            try:
+                parsed = json.loads(data)
+                return parsed
+            except (json.JSONDecodeError, ValueError) as e:
+                raise serializers.ValidationError(f"Invalid JSON format: {str(e)}")
+        
+        # For other types, use parent's validation
+        return super().to_internal_value(data)
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -21,6 +54,11 @@ class CompanyProfileSerializer(serializers.ModelSerializer):
     """Serializer for CompanyProfile model"""
     
     logo_url = serializers.SerializerMethodField()
+    # Explicitly define JSON fields to handle dict/list input properly
+    brand_analysis = FlexibleJSONField(required=False, allow_null=True)
+    content_topics = FlexibleJSONField(required=False, allow_null=True)
+    keywords = FlexibleJSONField(required=False, allow_null=True)
+    avoid_topics = FlexibleJSONField(required=False, allow_null=True)
     
     class Meta:
         model = CompanyProfile

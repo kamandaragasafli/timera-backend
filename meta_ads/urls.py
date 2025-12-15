@@ -22,6 +22,18 @@ urlpatterns = [
     path('campaigns/<str:campaign_id>/pause/', views.pause_campaign, name='pause_campaign'),
     path('campaigns/<str:campaign_id>/resume/', views.resume_campaign, name='resume_campaign'),
     
+    # Ad Sets
+    path('ad-sets/', views.AdSetListView.as_view(), name='ad_set_list'),
+    path('ad-sets/<str:ad_set_id>/', views.AdSetDetailView.as_view(), name='ad_set_detail'),
+    path('ad-sets/<str:ad_set_id>/pause/', views.pause_ad_set, name='pause_ad_set'),
+    path('ad-sets/<str:ad_set_id>/resume/', views.resume_ad_set, name='resume_ad_set'),
+    
+    # Ads
+    path('ads/', views.AdListView.as_view(), name='ad_list'),
+    path('ads/<str:ad_id>/', views.AdDetailView.as_view(), name='ad_detail'),
+    path('ads/<str:ad_id>/pause/', views.pause_ad, name='pause_ad'),
+    path('ads/<str:ad_id>/resume/', views.resume_ad, name='resume_ad'),
+    
     # Analytics
     path('insights/', views.InsightsView.as_view(), name='insights'),
 ]

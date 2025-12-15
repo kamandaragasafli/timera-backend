@@ -30,6 +30,135 @@ def safe_log_error(logger_func, message, *args, **kwargs):
         safe_message = message.encode('ascii', errors='replace').decode('ascii')
         logger_func(safe_message, *args, **kwargs)
 
+
+def convert_image_to_supported_format(image_data, content_type=None, filename=None):
+    """
+    Convert image to a format supported by OpenAI API (PNG, JPEG, GIF, WEBP).
+    AVIF and other unsupported formats are converted to PNG.
+    
+    Args:
+        image_data: Binary image data
+        content_type: MIME type of the image (optional)
+        filename: Original filename (optional)
+    
+    Returns:
+        tuple: (converted_image_data, mime_type)
+    """
+    try:
+        # Try to detect format from content type or filename
+        format_hint = None
+        if content_type:
+            if 'avif' in content_type.lower():
+                format_hint = 'AVIF'
+            elif 'png' in content_type.lower():
+                format_hint = 'PNG'
+            elif 'jpeg' in content_type.lower() or 'jpg' in content_type.lower():
+                format_hint = 'JPEG'
+            elif 'gif' in content_type.lower():
+                format_hint = 'GIF'
+            elif 'webp' in content_type.lower():
+                format_hint = 'WEBP'
+        
+        if not format_hint and filename:
+            ext = filename.split('.')[-1].lower()
+            if ext == 'avif':
+                format_hint = 'AVIF'
+            elif ext in ['png', 'jpg', 'jpeg', 'gif', 'webp']:
+                format_hint = ext.upper()
+        
+        # Open image with PIL
+        image = Image.open(io.BytesIO(image_data))
+        
+        # Check if format is supported by OpenAI
+        supported_formats = ['PNG', 'JPEG', 'GIF', 'WEBP']
+        current_format = format_hint or image.format
+        
+        if current_format and current_format.upper() not in supported_formats:
+            # Convert unsupported format to PNG
+            logger.info(f"Converting unsupported format {current_format} to PNG")
+            
+            # Convert to RGB if necessary (for JPEG compatibility)
+            if image.mode in ('RGBA', 'LA', 'P'):
+                # Create white background for transparency
+                background = Image.new('RGB', image.size, (255, 255, 255))
+                if image.mode == 'P':
+                    image = image.convert('RGBA')
+                background.paste(image, mask=image.split()[-1] if image.mode in ('RGBA', 'LA') else None)
+                image = background
+            elif image.mode not in ('RGB', 'L'):
+                image = image.convert('RGB')
+            
+            # Save as PNG
+            output = io.BytesIO()
+            image.save(output, format='PNG', optimize=True)
+            converted_data = output.getvalue()
+            output.close()
+            
+            return converted_data, 'image/png'
+        
+        # Format is supported, return as-is or convert to ensure compatibility
+        output = io.BytesIO()
+        if image.format == 'PNG':
+            image.save(output, format='PNG', optimize=True)
+            mime_type = 'image/png'
+        elif image.format in ('JPEG', 'JPG'):
+            # Ensure RGB mode for JPEG
+            if image.mode != 'RGB':
+                rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+                if image.mode == 'RGBA':
+                    rgb_image.paste(image, mask=image.split()[3])
+                else:
+                    rgb_image.paste(image)
+                image = rgb_image
+            image.save(output, format='JPEG', quality=95, optimize=True)
+            mime_type = 'image/jpeg'
+        elif image.format == 'GIF':
+            # For GIF, save as PNG (OpenAI supports GIF but PNG is more reliable)
+            if image.mode != 'RGB':
+                rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+                if image.mode == 'P':
+                    image = image.convert('RGBA')
+                if image.mode in ('RGBA', 'LA'):
+                    rgb_image.paste(image, mask=image.split()[-1])
+                else:
+                    rgb_image.paste(image)
+                image = rgb_image
+            image.save(output, format='PNG', optimize=True)
+            mime_type = 'image/png'
+        elif image.format == 'WEBP':
+            # Convert WEBP to PNG for better compatibility
+            if image.mode != 'RGB':
+                rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+                if image.mode in ('RGBA', 'LA'):
+                    rgb_image.paste(image, mask=image.split()[-1])
+                else:
+                    rgb_image.paste(image)
+                image = rgb_image
+            image.save(output, format='PNG', optimize=True)
+            mime_type = 'image/png'
+        else:
+            # Default to PNG
+            if image.mode != 'RGB':
+                rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+                if image.mode in ('RGBA', 'LA', 'P'):
+                    if image.mode == 'P':
+                        image = image.convert('RGBA')
+                    rgb_image.paste(image, mask=image.split()[-1] if image.mode in ('RGBA', 'LA') else None)
+                else:
+                    rgb_image.paste(image)
+                image = rgb_image
+            image.save(output, format='PNG', optimize=True)
+            mime_type = 'image/png'
+        
+        converted_data = output.getvalue()
+        output.close()
+        return converted_data, mime_type
+        
+    except Exception as e:
+        logger.error(f"Error converting image format: {e}", exc_info=True)
+        # Return original data and let API handle it
+        return image_data, content_type or 'image/jpeg'
+
 # Optional: Fal.ai service for video generation
 try:
     from .fal_ai_service import FalAIService
@@ -280,8 +409,26 @@ class AnalyzeLogoView(APIView):
                     context_info += f"Business: {business_desc}\n"
                 context_info += "\nUse this context to provide more accurate brand analysis.\n"
             
-            # Read and encode image
+            # Read and convert image if needed
             image_data = logo_file.read()
+            content_type = logo_file.content_type
+            filename = logo_file.name
+            
+            # Convert to supported format (AVIF -> PNG/JPEG)
+            image_data, mime_type = convert_image_to_supported_format(
+                image_data, 
+                content_type=content_type, 
+                filename=filename
+            )
+            
+            # Determine format for data URL
+            if 'png' in mime_type.lower():
+                data_url_format = 'image/png'
+            elif 'jpeg' in mime_type.lower() or 'jpg' in mime_type.lower():
+                data_url_format = 'image/jpeg'
+            else:
+                data_url_format = 'image/png'  # Default to PNG
+            
             base64_image = base64.b64encode(image_data).decode('utf-8')
             
             # Initialize OpenAI client
@@ -336,7 +483,7 @@ IMPORTANT:
                             {
                                 "type": "image_url",
                                 "image_url": {
-                                    "url": f"data:image/jpeg;base64,{base64_image}",
+                                    "url": f"data:{data_url_format};base64,{base64_image}",
                                     "detail": "high"
                                 }
                             }
@@ -688,8 +835,14 @@ Requirements:
             'request_id': f'openai_{logo_response.created}'
         }
         
+    except openai.APITimeoutError as e:
+        logger.error(f"❌ OpenAI API timeout error: {str(e)}")
+        raise ValueError(f"OpenAI API cavab vermədi. Zəhmət olmasa yenidən cəhd edin: {str(e)}")
+    except openai.APIError as e:
+        logger.error(f"❌ OpenAI API error: {str(e)}")
+        raise ValueError(f"OpenAI API xətası: {str(e)}. Zəhmət olmasa API key-in düzgün olduğunu yoxlayın.")
     except Exception as e:
-        logger.error(f"OpenAI API error: {e}")
+        logger.error(f"❌ Logo və slogan yaratma xətası: {str(e)}", exc_info=True)
         raise Exception(f"Logo və slogan yaradıla bilmədi: {str(e)}")
 
 
@@ -697,7 +850,7 @@ def download_and_save_logo(logo_url, user_id):
     """Logo yükləyib transparent background ilə saxlayır"""
     try:
         logger.info(f"📥 Logo yüklənir: {logo_url}")
-        response = requests.get(logo_url, timeout=30)
+        response = requests.get(logo_url, timeout=60)  # Increased timeout for server
         response.raise_for_status()
         
         # Load image with PIL
@@ -705,6 +858,7 @@ def download_and_save_logo(logo_url, user_id):
         import io
         
         logo_image = Image.open(io.BytesIO(response.content))
+        logger.info(f"   Original image size: {logo_image.size}, mode: {logo_image.mode}")
         
         # Convert to RGBA if not already
         if logo_image.mode != 'RGBA':
@@ -716,23 +870,31 @@ def download_and_save_logo(logo_url, user_id):
         # Get image dimensions
         width, height = logo_image.size
         
-        # Create new image with transparent background
-        transparent_logo = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-        
-        # Process each pixel
-        for x in range(width):
-            for y in range(height):
-                r, g, b, a = logo_image.getpixel((x, y))
-                
-                # If pixel is white or very light (background), make it transparent
-                # Threshold: if all RGB values are above 240, consider it background
-                if r > 240 and g > 240 and b > 240:
-                    transparent_logo.putpixel((x, y), (0, 0, 0, 0))
-                else:
-                    # Keep original pixel with full opacity
-                    transparent_logo.putpixel((x, y), (r, g, b, 255))
-        
-        logo_image = transparent_logo
+        # Optimize: Use NumPy for faster processing if available
+        try:
+            import numpy as np
+            # Convert to NumPy array for faster processing
+            img_array = np.array(logo_image)
+            
+            # Create mask for white/light pixels (threshold: RGB > 240)
+            # For RGBA images, check RGB channels only
+            white_mask = (img_array[:, :, 0] > 240) & (img_array[:, :, 1] > 240) & (img_array[:, :, 2] > 240)
+            
+            # Set alpha channel to 0 for white/light pixels
+            img_array[:, :, 3] = np.where(white_mask, 0, 255)
+            
+            # Convert back to PIL Image
+            logo_image = Image.fromarray(img_array, 'RGBA')
+            logger.info("   Background removal completed using NumPy (fast method)")
+        except ImportError:
+            # NumPy not available - use simpler method for small images
+            logger.info("   NumPy not available, using simplified background removal")
+            # Most DALL-E generated logos already have transparent backgrounds
+            # Just keep the image as-is for now
+            logger.info("   Keeping original image (most AI-generated logos already have transparent backgrounds)")
+        except Exception as np_error:
+            # NumPy error - fallback to keeping original
+            logger.warning(f"   NumPy processing error: {str(np_error)}, keeping original image")
         
         # Save transparent logo to memory
         output = io.BytesIO()
@@ -741,12 +903,27 @@ def download_and_save_logo(logo_url, user_id):
         
         # Save to storage
         filename = f"generated_logos/user_{user_id}_{uuid.uuid4()}.png"
-        path = default_storage.save(filename, ContentFile(output.read()))
+        logger.info(f"   Saving logo to: {filename}")
         
-        logger.info(f" Transparent logo saxlandı")
-        return default_storage.url(path)
+        try:
+            path = default_storage.save(filename, ContentFile(output.read()))
+            saved_url = default_storage.url(path)
+            logger.info(f"✅ Transparent logo saxlandı: {saved_url}")
+            return saved_url
+        except Exception as save_error:
+            logger.error(f"❌ File save error: {str(save_error)}")
+            logger.error(f"   Storage backend: {type(default_storage).__name__}")
+            logger.error(f"   MEDIA_ROOT: {getattr(settings, 'MEDIA_ROOT', 'Not set')}")
+            raise Exception(f"Logo fayl sisteminə yazıla bilmədi: {str(save_error)}")
+            
+    except requests.exceptions.Timeout:
+        logger.error(f"❌ Logo yükləmə timeout oldu (60 saniyə)")
+        raise Exception("Logo yükləmə çox uzun çəkdi. Zəhmət olmasa yenidən cəhd edin.")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Network error logo yükləyərkən: {str(e)}")
+        raise Exception(f"Logo yüklənə bilmədi (şəbəkə xətası): {str(e)}")
     except Exception as e:
-        logger.error(f" Logo yüklənmədi: {e}")
+        logger.error(f"❌ Logo yüklənmədi: {str(e)}", exc_info=True)
         raise Exception(f"Logo yüklənə bilmədi: {str(e)}")
 
 
@@ -826,21 +1003,42 @@ def generate_logo_slogan(request):
         return Response(response_data, status=status.HTTP_200_OK)
         
     except ValueError as e:
-        logger.error(f" Validation error: {str(e)}")
+        logger.error(f"❌ Validation error: {str(e)}")
         return Response(
             {"error": str(e)},
             status=status.HTTP_400_BAD_REQUEST
         )
+    except openai.APITimeoutError as e:
+        logger.error(f"❌ OpenAI API timeout: {str(e)}")
+        return Response({
+            "error": "OpenAI API cavab vermədi. Zəhmət olmasa bir az sonra yenidən cəhd edin.",
+            "details": str(e)
+        }, status=status.HTTP_504_GATEWAY_TIMEOUT)
+    except openai.APIError as e:
+        logger.error(f"❌ OpenAI API error: {str(e)}")
+        return Response({
+            "error": "OpenAI API xətası baş verdi. Zəhmət olmasa API key-in düzgün olduğunu yoxlayın.",
+            "details": str(e)
+        }, status=status.HTTP_502_BAD_GATEWAY)
+    except requests.exceptions.Timeout as e:
+        logger.error(f"❌ Request timeout: {str(e)}")
+        return Response({
+            "error": "Logo yükləmə çox uzun çəkdi. Zəhmət olmasa yenidən cəhd edin.",
+            "details": str(e)
+        }, status=status.HTTP_504_GATEWAY_TIMEOUT)
     except requests.exceptions.RequestException as e:
-        logger.error(f" Wask.co API error: {str(e)}")
+        logger.error(f"❌ Network error: {str(e)}")
         return Response({
-            "error": "Wask.co AI xidməti müvəqqəti olaraq əlçatan deyil",
-            "wask_error": str(e)
-        }, status=status.HTTP_400_BAD_REQUEST)
+            "error": "Şəbəkə xətası baş verdi. Zəhmət olmasa internet əlaqənizi yoxlayın.",
+            "details": str(e)
+        }, status=status.HTTP_502_BAD_GATEWAY)
     except Exception as e:
-        logger.error(f" Unexpected error: {str(e)}", exc_info=True)
+        logger.error(f"❌ Unexpected error: {str(e)}", exc_info=True)
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"   Traceback: {error_trace}")
         return Response({
-            "error": "Logo və slogan yaratma zamanı xəta baş verdi",
+            "error": "Logo və slogan yaratma zamanı gözlənilməz xəta baş verdi",
             "details": str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

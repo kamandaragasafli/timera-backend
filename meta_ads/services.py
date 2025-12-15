@@ -135,4 +135,20 @@ class MetaAPIService:
         except Exception as e:
             logger.error(f"Error getting ads: {e}")
             raise
+    
+    def update_ad_set(self, ad_set_id, **kwargs):
+        """Update ad set"""
+        try:
+            return self._request('POST', ad_set_id, json=kwargs)
+        except Exception as e:
+            logger.error(f"Error updating ad set: {e}")
+            raise
+    
+    def update_ad(self, ad_id, **kwargs):
+        """Update ad"""
+        try:
+            return self._request('POST', ad_id, json=kwargs)
+        except Exception as e:
+            logger.error(f"Error updating ad: {e}")
+            raise
 

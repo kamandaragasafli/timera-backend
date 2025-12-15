@@ -371,7 +371,7 @@ class PublishToInstagramView(APIView):
                 # In development, provide helpful error message
                 if settings.DEBUG:
                     return Response({
-                        'error': 'Instagram API localhost URL-lərini qəbul etmir. Production mühitində BACKEND_URL-in public olması lazımdır (məsələn: https://api.timera.az). Development-da test etmək üçün şəkli public bir yere (Cloudinary, Imgur, vb.) yükləyin.'
+                        'error': 'Instagram API localhost URL-lərini qəbul etmir. Production mühitində BACKEND_URL-in public olması lazımdır. Development-da test etmək üçün şəkli public bir yere (Cloudinary, Imgur, vb.) yükləyin.'
                     }, status=status.HTTP_400_BAD_REQUEST)
                 else:
                     # In production, this shouldn't happen if BACKEND_URL is set correctly
@@ -1037,7 +1037,7 @@ def regenerate_canva_design(request, post_id):
 #         f"https://www.canva.com/api/oauth/authorize"
 #         f"?response_type=code"
 #         f"&client_id={settings.CANVA_CLIENT_ID}"
-#         f"&redirect_uri=https://api.timera.az/api/canva/callback/"
+#         f"&redirect_uri={settings.BACKEND_URL}/api/canva/callback/"
 #         f"&scope=design:content:read design:content:write design:meta:read asset:read"
 #         f"&state={state}"
 #     )
@@ -1048,7 +1048,7 @@ def regenerate_canva_design(request, post_id):
 # def canva_oauth_callback(request):
 #     """Handle Canva OAuth callback"""
 #     # [OAuth callback logic - DEPRECATED]
-#     return redirect('https://timera.az/settings?canva_error=deprecated')
+#     return redirect(f'{settings.FRONTEND_URL}/settings?canva_error=deprecated')
 
 
 # @api_view(['GET'])

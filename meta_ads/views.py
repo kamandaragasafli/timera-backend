@@ -410,6 +410,150 @@ def resume_campaign(request, campaign_id):
 
 
 # ============================================================================
+# AD SETS
+# ============================================================================
+
+class AdSetListView(generics.ListAPIView):
+    """List ad sets"""
+    
+    serializer_class = MetaAdSetSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        campaign_id = self.request.query_params.get('campaign_id')
+        account_id = self.request.query_params.get('account_id')
+        queryset = MetaAdSet.objects.filter(campaign__account__user=self.request.user)
+        
+        if campaign_id:
+            queryset = queryset.filter(campaign__campaign_id=campaign_id)
+        elif account_id:
+            queryset = queryset.filter(campaign__account__account_id=account_id)
+        
+        return queryset.order_by('-created_at')
+
+
+class AdSetDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """Get, update, or delete ad set"""
+    
+    serializer_class = MetaAdSetSerializer
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'ad_set_id'
+    
+    def get_queryset(self):
+        return MetaAdSet.objects.filter(campaign__account__user=self.request.user)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def pause_ad_set(request, ad_set_id):
+    """Pause an ad set"""
+    try:
+        ad_set = get_object_or_404(MetaAdSet, ad_set_id=ad_set_id, campaign__account__user=request.user)
+        
+        api_service = MetaAPIService(ad_set.campaign.account.get_access_token())
+        api_service.update_ad_set(ad_set.ad_set_id, status='PAUSED')
+        
+        ad_set.status = 'PAUSED'
+        ad_set.save()
+        
+        return Response({'message': 'Reklam qrupu dayandırıldı', 'ad_set': MetaAdSetSerializer(ad_set).data})
+    except Exception as e:
+        logger.error(f"Error pausing ad set: {e}")
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def resume_ad_set(request, ad_set_id):
+    """Resume an ad set"""
+    try:
+        ad_set = get_object_or_404(MetaAdSet, ad_set_id=ad_set_id, campaign__account__user=request.user)
+        
+        api_service = MetaAPIService(ad_set.campaign.account.get_access_token())
+        api_service.update_ad_set(ad_set.ad_set_id, status='ACTIVE')
+        
+        ad_set.status = 'ACTIVE'
+        ad_set.save()
+        
+        return Response({'message': 'Reklam qrupu aktivləşdirildi', 'ad_set': MetaAdSetSerializer(ad_set).data})
+    except Exception as e:
+        logger.error(f"Error resuming ad set: {e}")
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+# ============================================================================
+# ADS
+# ============================================================================
+
+class AdListView(generics.ListAPIView):
+    """List ads"""
+    
+    serializer_class = MetaAdSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        ad_set_id = self.request.query_params.get('ad_set_id')
+        account_id = self.request.query_params.get('account_id')
+        queryset = MetaAd.objects.filter(ad_set__campaign__account__user=self.request.user)
+        
+        if ad_set_id:
+            queryset = queryset.filter(ad_set__ad_set_id=ad_set_id)
+        elif account_id:
+            queryset = queryset.filter(ad_set__campaign__account__account_id=account_id)
+        
+        return queryset.order_by('-created_at')
+
+
+class AdDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """Get, update, or delete ad"""
+    
+    serializer_class = MetaAdSerializer
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'ad_id'
+    
+    def get_queryset(self):
+        return MetaAd.objects.filter(ad_set__campaign__account__user=self.request.user)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def pause_ad(request, ad_id):
+    """Pause an ad"""
+    try:
+        ad = get_object_or_404(MetaAd, ad_id=ad_id, ad_set__campaign__account__user=request.user)
+        
+        api_service = MetaAPIService(ad.ad_set.campaign.account.get_access_token())
+        api_service.update_ad(ad.ad_id, status='PAUSED')
+        
+        ad.status = 'PAUSED'
+        ad.save()
+        
+        return Response({'message': 'Reklam dayandırıldı', 'ad': MetaAdSerializer(ad).data})
+    except Exception as e:
+        logger.error(f"Error pausing ad: {e}")
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def resume_ad(request, ad_id):
+    """Resume an ad"""
+    try:
+        ad = get_object_or_404(MetaAd, ad_id=ad_id, ad_set__campaign__account__user=request.user)
+        
+        api_service = MetaAPIService(ad.ad_set.campaign.account.get_access_token())
+        api_service.update_ad(ad.ad_id, status='ACTIVE')
+        
+        ad.status = 'ACTIVE'
+        ad.save()
+        
+        return Response({'message': 'Reklam aktivləşdirildi', 'ad': MetaAdSerializer(ad).data})
+    except Exception as e:
+        logger.error(f"Error resuming ad: {e}")
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+# ============================================================================
 # ANALYTICS
 # ============================================================================
 

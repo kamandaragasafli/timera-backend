@@ -95,6 +95,13 @@ class OpenAIService:
                 )
                 created_posts.append(post)
             
+            # Validate that we created posts
+            if not created_posts or len(created_posts) == 0:
+                logger.error(f"❌ No posts were created")
+                ai_batch.status = 'generating'
+                ai_batch.save()
+                raise ValueError("Failed to generate posts. No posts were created. Please try again.")
+            
             # Update batch status
             ai_batch.status = 'pending_approval'
             ai_batch.save()
@@ -102,11 +109,17 @@ class OpenAIService:
             logger.info(f"✅ Successfully created {len(created_posts)} post objects")
             return ai_batch, created_posts
             
+        except ValueError as ve:
+            # Re-raise ValueError as-is (these are user-friendly messages)
+            logger.error(f"❌ ValueError in post generation: {str(ve)}")
+            ai_batch.status = 'failed'
+            ai_batch.save()
+            raise ve
         except Exception as e:
             logger.error(f"❌ Failed to generate posts: {str(e)}", exc_info=True)
             ai_batch.status = 'failed'
             ai_batch.save()
-            raise e
+            raise ValueError(f"Failed to generate posts: {str(e)}")
     
     def _build_generation_prompt(self, company_profile, num_posts=5, custom_prompt=''):
         """Build comprehensive prompt for ChatGPT with ALL company information"""
@@ -248,7 +261,11 @@ HƏR POST ÜÇÜN DIZAYN SPESIFIKASIYALARI DA ƏLAVƏ ET:
         prompt = self._build_generation_prompt(company_profile, num_posts, custom_prompt)
         
         try:
-            logger.info(f"🔄 Sending request to OpenAI (model: gpt-4o-mini)")
+            logger.info(f"🔄 Sending request to OpenAI (model: gpt-4o-mini) for {num_posts} posts")
+            # Increase timeout and max_tokens for larger post counts
+            timeout_duration = max(120, num_posts * 15)  # At least 15 seconds per post
+            max_tokens_value = max(4000, num_posts * 500)  # At least 500 tokens per post
+            
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",  # Using faster, cheaper model
                 messages=[
@@ -258,9 +275,9 @@ HƏR POST ÜÇÜN DIZAYN SPESIFIKASIYALARI DA ƏLAVƏ ET:
                     },
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=3000,
+                max_tokens=max_tokens_value,
                 temperature=0.7,
-                timeout=60  # 60 second timeout
+                timeout=timeout_duration  # Dynamic timeout based on post count
             )
             
             content = response.choices[0].message.content
@@ -287,9 +304,16 @@ HƏR POST ÜÇÜN DIZAYN SPESIFIKASIYALARI DA ƏLAVƏ ET:
                 # If JSON parsing fails, create fallback posts
                 return self._create_fallback_posts(company_profile)
                 
-        except Exception as e:
+        except openai.APITimeoutError as e:
+            logger.error(f"❌ OpenAI API Timeout Error: {str(e)}")
+            logger.error(f"   This might be due to generating too many posts ({num_posts}). Try generating fewer posts at once.")
+            raise ValueError(f"OpenAI API timeout. Generating {num_posts} posts took too long. Please try generating fewer posts (5-7) at once or try again later.")
+        except openai.APIError as e:
             logger.error(f"❌ OpenAI API Error: {str(e)}", exc_info=True)
-            return self._create_fallback_posts(company_profile)
+            raise ValueError(f"OpenAI API error: {str(e)}. Please check your API key and try again.")
+        except Exception as e:
+            logger.error(f"❌ Unexpected error in OpenAI API call: {str(e)}", exc_info=True)
+            raise ValueError(f"Failed to generate posts: {str(e)}")
     
     def _create_fallback_posts(self, company_profile):
         """Create fallback posts if AI generation fails"""
@@ -744,10 +768,12 @@ class PostGenerationService:
         
         try:
             post = Post.objects.get(id=post_id, user=user)
+            
+            # Save image first without branding
             post.custom_image = image_file
             post.design_url = ''  # Clear Canva design when custom image is uploaded
             post.canva_design_id = ''
-            post.save()
+            post.save()  # Save first to get the file path
             
             # Auto-apply branding after upload if enabled
             try:
@@ -758,21 +784,42 @@ class PostGenerationService:
                     logger.info(f"🎨 Auto-applying branding to manually uploaded image for post {post_id}")
                     from .branding import ImageBrandingService
                     from django.core.files.base import ContentFile
+                    import os
                     
-                    branding_service = ImageBrandingService(company_profile)
-                    branded_image = branding_service.apply_branding(post.custom_image.path)
-                    output = branding_service.save_branded_image(branded_image, format='PNG')
+                    # Check if logo file exists
+                    if not os.path.exists(company_profile.logo.path):
+                        logger.warning(f"⚠️  Logo file not found at {company_profile.logo.path}")
+                        return post
                     
-                    # Replace with branded version
-                    filename = f"branded_{post.id}.png"
-                    post.custom_image.save(filename, ContentFile(output.read()), save=True)
-                    logger.info(f"✅ Branding auto-applied to manually uploaded image")
+                    # Check if uploaded image file exists
+                    if not post.custom_image or not hasattr(post.custom_image, 'path'):
+                        logger.warning(f"⚠️  Uploaded image file not found for post {post_id}")
+                        return post
+                    
+                    try:
+                        branding_service = ImageBrandingService(company_profile)
+                        # Use the saved image path
+                        image_path = post.custom_image.path
+                        logger.info(f"   Applying branding to image: {image_path}")
+                        
+                        branded_image = branding_service.apply_branding(image_path)
+                        output = branding_service.save_branded_image(branded_image, format='PNG')
+                        
+                        # Replace with branded version
+                        filename = f"branded_{post.id}.png"
+                        post.custom_image.save(filename, ContentFile(output.read()), save=True)
+                        logger.info(f"✅ Branding auto-applied to manually uploaded image")
+                    except Exception as branding_error:
+                        logger.error(f"❌ Failed to apply branding: {str(branding_error)}")
+                        import traceback
+                        logger.error(traceback.format_exc())
+                        # Continue without branding - image is still uploaded
                 else:
                     logger.info(f"ℹ️  Branding skipped (enabled: {company_profile.branding_enabled}, has_logo: {bool(company_profile.logo)})")
             except CompanyProfile.DoesNotExist:
                 logger.warning(f"⚠️  No company profile found for user {user.email}")
             except Exception as e:
-                logger.error(f"❌ Failed to auto-apply branding: {e}")
+                logger.error(f"❌ Failed to auto-apply branding: {str(e)}")
                 import traceback
                 logger.error(traceback.format_exc())
                 # Continue without branding - image is still uploaded
@@ -781,5 +828,10 @@ class PostGenerationService:
             
         except Post.DoesNotExist:
             raise ValueError("Post not found")
+        except Exception as e:
+            logger.error(f"❌ Error uploading custom image: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise ValueError(f"Failed to upload image: {str(e)}")
 
 
