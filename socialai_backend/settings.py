@@ -8,6 +8,9 @@ from pathlib import Path
 from decouple import config, Config, RepositoryEnv
 from datetime import timedelta
 import os
+import sys
+import io
+import logging
 
 # Load environment variables from local.env if it exists
 env_file = Path(__file__).resolve().parent.parent / 'local.env'
@@ -256,6 +259,9 @@ CELERY_TIMEZONE = TIME_ZONE
 # External API Configuration
 OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
 
+# Apify API Key (Instagram Scraping)
+APIFY_API_KEY = config('APIFY_API_KEY', default='')
+
 # Wask.co AI Logo & Slogan Generator
 WASK_API_URL = config('WASK_API_URL', default='https://api.wask.co/v1/generate-logo-slogan')
 WASK_API_KEY = config('WASK_API_KEY', default='')
@@ -263,8 +269,21 @@ WASK_API_KEY = config('WASK_API_KEY', default='')
 # Ideogram.ai Image Generation API (AI-powered, perfect for text-in-images)
 IDEOGRAM_API_KEY = config('IDEOGRAM_API_KEY', default='')
 
-# Fal.ai Image Generation API
+# Fal.ai Image Generation API (DEACTIVATED - using Pexels/Unsplash instead)
 FAL_AI_API_KEY = config('FAL_AI_API_KEY', default='')
+
+# Free Stock Photo APIs (use any or all of these)
+# Pexels API (Free stock photos - https://www.pexels.com/api/)
+# Get free API key at: https://www.pexels.com/api/
+PEXELS_API_KEY = config('PEXELS_API_KEY', default='')
+
+# Pixabay API (Free stock photos - https://pixabay.com/api/docs/)
+# Get free API key at: https://pixabay.com/api/docs/
+PIXABAY_API_KEY = config('PIXABAY_API_KEY', default='')
+
+# Unsplash API (Free stock photos - https://unsplash.com/developers)
+# Get free API key at: https://unsplash.com/developers
+UNSPLASH_API_KEY = config('UNSPLASH_API_KEY', default='')
 
 # Supabase Storage Configuration
 SUPABASE_URL = config('SUPABASE_URL', default='')
@@ -290,6 +309,32 @@ N8N_WEBHOOK_URL = config('N8N_WEBHOOK_URL', default='')
 N8N_API_KEY = config('N8N_API_KEY', default='')
 
 # Logging Configuration
+# Custom handler for UTF-8 encoding support (Windows compatibility)
+class UTF8StreamHandler(logging.StreamHandler):
+    """StreamHandler with UTF-8 encoding support for Windows"""
+    def __init__(self, stream=None):
+        if stream is None:
+            stream = sys.stdout
+        super().__init__(stream)
+    
+    def emit(self, record):
+        """Emit a record with UTF-8 encoding support"""
+        try:
+            msg = self.format(record)
+            stream = self.stream
+            # Encode to UTF-8 with error replacement for Windows compatibility
+            if hasattr(stream, 'buffer'):
+                # For binary streams, encode properly
+                stream.buffer.write(msg.encode('utf-8', errors='replace'))
+                stream.buffer.write(self.terminator.encode('utf-8'))
+            else:
+                # For text streams, write directly (Python 3 handles encoding)
+                stream.write(msg)
+                stream.write(self.terminator)
+            self.flush()
+        except Exception:
+            self.handleError(record)
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -309,10 +354,11 @@ LOGGING = {
             'class': 'logging.FileHandler',
             'filename': BASE_DIR / 'logs' / 'django.log',
             'formatter': 'verbose',
+            'encoding': 'utf-8',  # UTF-8 encoding for file logs
         },
         'console': {
             'level': 'DEBUG',
-            'class': 'logging.StreamHandler',
+            '()': UTF8StreamHandler,  # Use custom UTF-8 handler
             'formatter': 'verbose',
         },
     },

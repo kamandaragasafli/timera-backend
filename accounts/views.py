@@ -174,12 +174,41 @@ class CompanyProfileView(generics.RetrieveUpdateAPIView):
             except UnicodeEncodeError:
                 logger.info(f"   Slogan: [contains non-ASCII characters]")
         
-        # Check if logo file exists
+        # Check if logo file exists - MAX DEBUG LOGS
         logo_file = request.FILES.get('logo')
+        logger.info(f"   [DEBUG] Checking for logo file...")
+        logger.info(f"   [DEBUG] request.FILES type: {type(request.FILES)}")
+        logger.info(f"   [DEBUG] request.FILES dict: {dict(request.FILES) if hasattr(request.FILES, '__dict__') else 'N/A'}")
+        logger.info(f"   [DEBUG] All FILES keys: {list(request.FILES.keys()) if request.FILES else 'None'}")
+        logger.info(f"   [DEBUG] request.content_type: {request.content_type}")
+        logger.info(f"   [DEBUG] request.META Content-Type: {request.META.get('CONTENT_TYPE', 'N/A')}")
+        logger.info(f"   [DEBUG] request.META Content-Length: {request.META.get('CONTENT_LENGTH', 'N/A')}")
+        
         if logo_file:
-            logger.info(f"   Logo file details: name={logo_file.name}, size={logo_file.size}, content_type={logo_file.content_type}")
+            logger.info(f"   [DEBUG] ✅ Logo file FOUND!")
+            logger.info(f"   [DEBUG] Logo file details:")
+            logger.info(f"      - name: {logo_file.name}")
+            logger.info(f"      - size: {logo_file.size} bytes ({logo_file.size / 1024:.2f} KB)")
+            logger.info(f"      - content_type: {logo_file.content_type}")
+            logger.info(f"      - charset: {getattr(logo_file, 'charset', 'N/A')}")
+            logger.info(f"      - file type: {type(logo_file)}")
+            try:
+                # Try to read first few bytes to verify file is accessible
+                logo_file.seek(0)
+                first_bytes = logo_file.read(10)
+                logo_file.seek(0)  # Reset to beginning
+                logger.info(f"      - first 10 bytes (hex): {first_bytes.hex()}")
+                logger.info(f"      - file readable: {logo_file.readable()}")
+            except Exception as e:
+                logger.error(f"      - ERROR reading file: {e}")
         else:
-            logger.warning(f"   [WARNING] No logo file found in request.FILES")
+            logger.warning(f"   [WARNING] ❌ No logo file found in request.FILES")
+            logger.warning(f"   [DEBUG] Checking alternative ways to access logo...")
+            # Try alternative ways to get logo
+            if hasattr(request, 'data') and 'logo' in request.data:
+                logger.warning(f"   [DEBUG] Found 'logo' in request.data (not FILES): {type(request.data.get('logo'))}")
+            if 'logo' in request.POST:
+                logger.warning(f"   [DEBUG] Found 'logo' in request.POST: {type(request.POST.get('logo'))}")
         
         try:
             # Parse JSON fields if they come as strings
@@ -257,9 +286,18 @@ class CompanyProfileView(generics.RetrieveUpdateAPIView):
             # Get serializer with parsed data (pass as dict, not QueryDict)
             # Include FILES if present - merge data with FILES
             serializer_data = data.copy()
+            logger.info(f"   [DEBUG] Preparing serializer data...")
+            logger.info(f"   [DEBUG] serializer_data keys: {list(serializer_data.keys())}")
+            
             if request.FILES:
-                # FILES are already in request, serializer will get them from context
-                pass
+                logger.info(f"   [DEBUG] ✅ FILES present in request")
+                logger.info(f"   [DEBUG] FILES will be passed via context to serializer")
+                # Verify logo is still accessible
+                if logo_file:
+                    logger.info(f"   [DEBUG] Logo file still accessible before serializer")
+                    logger.info(f"   [DEBUG] Logo file position: {logo_file.tell() if hasattr(logo_file, 'tell') else 'N/A'}")
+            else:
+                logger.warning(f"   [DEBUG] ⚠️ No FILES in request when preparing serializer")
             
             # Log the data before passing to serializer for debugging
             logger.info(f"   Data before serializer (first 500 chars): {str(serializer_data)[:500]}")
@@ -268,6 +306,10 @@ class CompanyProfileView(generics.RetrieveUpdateAPIView):
                     value = serializer_data[field]
                     logger.info(f"   {field} type: {type(value).__name__}, value: {str(value)[:200]}")
             
+            logger.info(f"   [DEBUG] Creating serializer instance...")
+            logger.info(f"   [DEBUG] Instance ID: {instance.id if instance.id else 'NEW'}")
+            logger.info(f"   [DEBUG] Instance logo before: {instance.logo.name if instance.logo else 'None'}")
+            
             serializer = self.get_serializer(
                 instance, 
                 data=serializer_data, 
@@ -275,11 +317,34 @@ class CompanyProfileView(generics.RetrieveUpdateAPIView):
                 context={'request': request}
             )
             
+            logger.info(f"   [DEBUG] Serializer created, checking validation...")
+            
             # Validate and log errors if any
             if not serializer.is_valid():
-                logger.error(f"   Serializer validation errors: {serializer.errors}")
+                logger.error(f"   [ERROR] Serializer validation errors: {serializer.errors}")
+                logger.error(f"   [DEBUG] Validation error details:")
+                for field, errors in serializer.errors.items():
+                    logger.error(f"      - {field}: {errors}")
                 raise serializers.ValidationError(serializer.errors)
-            serializer.save()
+            
+            logger.info(f"   [DEBUG] ✅ Serializer is valid")
+            logger.info(f"   [DEBUG] Serializer has logo in validated_data: {'logo' in serializer.validated_data}")
+            logger.info(f"   [DEBUG] Saving serializer...")
+            
+            # Log before save
+            if logo_file:
+                logger.info(f"   [DEBUG] Logo file will be saved:")
+                logger.info(f"      - Current instance logo: {instance.logo.name if instance.logo else 'None'}")
+                logger.info(f"      - New logo file name: {logo_file.name}")
+                logger.info(f"      - New logo file size: {logo_file.size} bytes")
+            
+            saved_instance = serializer.save()
+            
+            logger.info(f"   [DEBUG] ✅ Serializer saved successfully")
+            logger.info(f"   [DEBUG] Saved instance logo: {saved_instance.logo.name if saved_instance.logo else 'None'}")
+            if saved_instance.logo:
+                logger.info(f"   [DEBUG] Logo URL: {saved_instance.logo.url}")
+                logger.info(f"   [DEBUG] Logo file exists: {saved_instance.logo.storage.exists(saved_instance.logo.name)}")
             
             logger.info(f"[SUCCESS] Company profile updated successfully")
             

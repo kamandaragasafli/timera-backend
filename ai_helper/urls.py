@@ -15,5 +15,17 @@ urlpatterns = [
     path('fal-ai/nano-banana/image-to-image/', views.nano_banana_image_to_image, name='nano_banana_image_to_image'),
     # Kling Video endpoints
     path('fal-ai/kling-video/text-to-video/', views.kling_video_text_to_video, name='kling_video_text_to_video'),
+    # Product Post Creation
+    path('product-post/', views.create_product_post, name='create_product_post'),
+    # Product Post from URL (NEW)
+    path('product-post-from-url/', views.create_product_post_from_url, name='create_product_post_from_url'),
+    # Social Media Analysis
+    path('instagram-analysis/', views.analyze_instagram_profile, name='analyze_instagram_profile'),
+    path('facebook-analysis/', views.analyze_facebook_profile, name='analyze_facebook_profile'),
+    path('linkedin-analysis/', views.analyze_linkedin_profile, name='analyze_linkedin_profile'),
+    path('analyze-profile/', views.analyze_profile_from_url, name='analyze_profile_from_url'),
+    path('saved-profiles/', views.get_saved_profiles, name='get_saved_profiles'),
+    # Translation
+    path('translate/', views.translate_text, name='translate_text'),
 ]
 

@@ -36,8 +36,101 @@ class PostListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         return Post.objects.filter(user=self.request.user)
     
+    def create(self, request, *args, **kwargs):
+        """Override create method to add extensive logging"""
+        logger.info("=" * 80)
+        logger.info("[DEBUG] 🎯 PostListCreateView.create() called")
+        logger.info(f"[DEBUG] User: {request.user.email} (ID: {request.user.id})")
+        logger.info(f"[DEBUG] Request method: {request.method}")
+        logger.info(f"[DEBUG] Content-Type: {request.content_type}")
+        logger.info(f"[DEBUG] Content-Length: {request.META.get('CONTENT_LENGTH', 'N/A')}")
+        logger.info(f"[DEBUG] Has FILES: {bool(request.FILES)}")
+        if request.FILES:
+            logger.info(f"[DEBUG] FILES keys: {list(request.FILES.keys())}")
+            for key, file in request.FILES.items():
+                logger.info(f"[DEBUG]   - {key}: {file.name}, {file.size} bytes, {file.content_type}")
+        
+        logger.info(f"[DEBUG] Request data keys: {list(request.data.keys())}")
+        logger.info(f"[DEBUG] Request data (first 1000 chars): {str(request.data)[:1000]}")
+        
+        # Log specific fields
+        for field in ['title', 'content', 'description', 'hashtags', 'status', 'scheduled_time', 
+                     'design_url', 'image_url', 'custom_image', 'imgly_scene']:
+            if field in request.data:
+                value = request.data[field]
+                if isinstance(value, str) and len(value) > 200:
+                    logger.info(f"[DEBUG]   {field}: {value[:200]}... (truncated, total length: {len(value)})")
+                else:
+                    logger.info(f"[DEBUG]   {field}: {value}")
+        
+        try:
+            # Get serializer
+            serializer = self.get_serializer(data=request.data)
+            logger.info(f"[DEBUG] Serializer created: {type(serializer).__name__}")
+            
+            # Validate
+            logger.info(f"[DEBUG] Validating serializer...")
+            if not serializer.is_valid():
+                logger.error(f"[ERROR] ❌ Serializer validation failed!")
+                logger.error(f"[ERROR] Validation errors: {serializer.errors}")
+                for field, errors in serializer.errors.items():
+                    logger.error(f"[ERROR]   - {field}: {errors}")
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            logger.info(f"[DEBUG] ✅ Serializer is valid")
+            logger.info(f"[DEBUG] Validated data keys: {list(serializer.validated_data.keys())}")
+            
+            # Log validated data
+            for key, value in serializer.validated_data.items():
+                if isinstance(value, str) and len(value) > 200:
+                    logger.info(f"[DEBUG]   validated_data.{key}: {value[:200]}... (truncated)")
+                elif isinstance(value, (dict, list)):
+                    logger.info(f"[DEBUG]   validated_data.{key}: {type(value).__name__} with {len(value)} items")
+                else:
+                    logger.info(f"[DEBUG]   validated_data.{key}: {value}")
+            
+            # Perform create
+            logger.info(f"[DEBUG] Saving post...")
+            self.perform_create(serializer)
+            logger.info(f"[DEBUG] ✅ Post saved successfully")
+            logger.info(f"[DEBUG] Post ID: {serializer.instance.id}")
+            logger.info(f"[DEBUG] Post status: {serializer.instance.status}")
+            logger.info(f"[DEBUG] Post title: {serializer.instance.title}")
+            logger.info(f"[DEBUG] Post content length: {len(serializer.instance.content) if serializer.instance.content else 0}")
+            
+            headers = self.get_success_headers(serializer.data)
+            logger.info(f"[DEBUG] Response headers: {headers}")
+            logger.info(f"[DEBUG] ✅ Post creation completed successfully")
+            logger.info("=" * 80)
+            
+            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+            
+        except Exception as e:
+            logger.error(f"[ERROR] ❌ Exception during post creation: {e}", exc_info=True)
+            logger.error(f"[ERROR] Exception type: {type(e).__name__}")
+            logger.error(f"[ERROR] Exception args: {e.args}")
+            logger.info("=" * 80)
+            raise
+    
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        logger.info(f"[DEBUG] perform_create() called")
+        logger.info(f"[DEBUG] User: {serializer.context['request'].user.email}")
+        logger.info(f"[DEBUG] Saving post with user assignment...")
+        instance = serializer.save(user=self.request.user)
+        logger.info(f"[DEBUG] ✅ Post instance created: {instance.id}")
+        logger.info(f"[DEBUG] Post instance details:")
+        logger.info(f"[DEBUG]   - ID: {instance.id}")
+        logger.info(f"[DEBUG]   - Title: {instance.title}")
+        logger.info(f"[DEBUG]   - Status: {instance.status}")
+        logger.info(f"[DEBUG]   - Content: {instance.content[:100] if instance.content else 'None'}...")
+        logger.info(f"[DEBUG]   - Has image: {bool(instance.image_url or instance.custom_image or instance.design_url)}")
+        if instance.image_url:
+            logger.info(f"[DEBUG]   - image_url: {instance.image_url}")
+        if instance.custom_image:
+            logger.info(f"[DEBUG]   - custom_image: {instance.custom_image.name}")
+        if instance.design_url:
+            logger.info(f"[DEBUG]   - design_url: {instance.design_url}")
+        return instance
     
     def get_serializer_context(self):
         """Pass request context to serializer"""
@@ -512,21 +605,69 @@ class PublishToLinkedInView(APIView):
             # Get the post
             post = Post.objects.get(id=post_id, user=request.user)
             
-            # Get user's LinkedIn account
-            linkedin_account = SocialAccount.objects.filter(
-                user=request.user,
-                platform='linkedin',
-                is_active=True
-            ).first()
+            # Check if user wants to post to Company Page or personal account
+            company_page_id = request.data.get('company_page_id', None)
             
-            if not linkedin_account:
-                return Response({
-                    'error': 'LinkedIn hesabı bağlı deyil'
-                }, status=status.HTTP_400_BAD_REQUEST)
+            # Get LinkedIn account (Company Page or personal)
+            if company_page_id:
+                # Post to Company Page
+                linkedin_account = SocialAccount.objects.filter(
+                    user=request.user,
+                    platform='linkedin',
+                    platform_user_id=company_page_id,
+                    is_active=True,
+                    settings__is_company_page=True
+                ).first()
+                
+                if not linkedin_account:
+                    return Response({
+                        'error': 'LinkedIn Company Page tapılmadı'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Use organization URN for Company Page
+                author_urn = f"urn:li:organization:{company_page_id}"
+            else:
+                # Post to personal account (default)
+                # Get LinkedIn account (prefer non-company page, but fallback to any if needed)
+                linkedin_accounts = SocialAccount.objects.filter(
+                    user=request.user,
+                    platform='linkedin',
+                    is_active=True
+                )
+                
+                logger.info(f"🔍 Looking for LinkedIn account for user {request.user.email}")
+                logger.info(f"   Total LinkedIn accounts found: {linkedin_accounts.count()}")
+                
+                # Try to find personal account (not a company page)
+                linkedin_account = None
+                for account in linkedin_accounts:
+                    # Check if it's a company page
+                    is_company_page = False
+                    if account.settings:
+                        is_company_page = account.settings.get('is_company_page', False)
+                    logger.info(f"   Account ID: {account.platform_user_id}, is_company_page: {is_company_page}, settings: {account.settings}")
+                    if not is_company_page:
+                        linkedin_account = account
+                        logger.info(f"✅ Found personal LinkedIn account: {account.platform_user_id}")
+                        break
+                
+                # If no personal account found, use first account (fallback)
+                if not linkedin_account and linkedin_accounts.exists():
+                    linkedin_account = linkedin_accounts.first()
+                    logger.info(f"⚠️ Using first LinkedIn account as fallback: {linkedin_account.platform_user_id}")
+                
+                if not linkedin_account:
+                    logger.error(f"❌ No LinkedIn account found for user {request.user.email}")
+                    return Response({
+                        'error': 'LinkedIn hesabı bağlı deyil'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Use person URN for personal account
+                linkedin_user_id = linkedin_account.platform_user_id
+                author_urn = f"urn:li:person:{linkedin_user_id}"
             
-            # Get access token and LinkedIn user ID
+            # Get access token
             access_token = linkedin_account.get_access_token()
-            linkedin_user_id = linkedin_account.platform_user_id
             
             # Prepare the post content
             post_text = post.content
@@ -543,9 +684,6 @@ class PublishToLinkedInView(APIView):
             # Make sure it's a full URL
             if image_url and not image_url.startswith('http'):
                 image_url = f"{settings.BACKEND_URL}{image_url}"
-            
-            # Prepare the UGC post payload
-            author_urn = f"urn:li:person:{linkedin_user_id}"
             
             if image_url:
                 # Upload image to LinkedIn first
@@ -1253,32 +1391,73 @@ class SchedulePostView(APIView):
 
 
 @api_view(['GET'])
-@permission_classes([permissions.IsAuthenticated])
+@permission_classes([])  # Public endpoint for image proxying
 def proxy_image(request):
     """Proxy external images to bypass CORS restrictions"""
     from django.http import HttpResponse
+    import logging
+    
+    logger = logging.getLogger(__name__)
     
     image_url = request.GET.get('url')
     
     if not image_url:
+        logger.warning("❌ Proxy image: URL parameter missing")
         return Response({'error': 'URL parameter required'}, status=status.HTTP_400_BAD_REQUEST)
     
+    logger.info(f"🖼️ Proxy image request: {image_url[:100]}...")
+    
+    # Security: Only allow social media CDN URLs (Instagram, LinkedIn, Facebook)
+    allowed_domains = ['cdninstagram.com', 'instagram.com', 'licdn.com', 'linkedin.com', 'fbcdn.net', 'facebook.com']
+    if not (image_url.startswith('https://') and any(domain in image_url for domain in allowed_domains)):
+        logger.warning(f"❌ Proxy image: Invalid URL (not from allowed social media CDN): {image_url[:100]}")
+        return Response({'error': 'Invalid image URL'}, status=status.HTTP_400_BAD_REQUEST)
+    
     try:
-        # Fetch the image
-        response = requests.get(image_url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
+        # Fetch the image with proper headers
+        logger.info(f"📥 Fetching image from: {image_url[:100]}...")
+        
+        # Determine referer based on URL
+        referer = 'https://www.instagram.com/'
+        if 'licdn.com' in image_url or 'linkedin.com' in image_url:
+            referer = 'https://www.linkedin.com/'
+        elif 'fbcdn.net' in image_url or 'facebook.com' in image_url:
+            referer = 'https://www.facebook.com/'
+        
+        response = requests.get(image_url, timeout=15, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+            'Referer': referer,
+            'Accept-Language': 'en-US,en;q=0.9',
+        }, allow_redirects=True, stream=True)
+        
+        logger.info(f"📊 Image fetch response: {response.status_code}, Content-Type: {response.headers.get('Content-Type', 'unknown')}")
         
         if response.status_code == 200:
+            # Read the image content
+            image_content = response.content
+            logger.info(f"✅ Image fetched successfully: {len(image_content)} bytes")
+            
             # Return the image with CORS headers
-            http_response = HttpResponse(response.content, content_type=response.headers.get('Content-Type', 'image/png'))
+            content_type = response.headers.get('Content-Type', 'image/jpeg')
+            http_response = HttpResponse(image_content, content_type=content_type)
             http_response['Access-Control-Allow-Origin'] = '*'
-            http_response['Access-Control-Allow-Methods'] = 'GET'
+            http_response['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+            http_response['Access-Control-Allow-Headers'] = 'Content-Type'
+            http_response['Cache-Control'] = 'public, max-age=3600'  # Cache for 1 hour
             return http_response
         else:
-            return Response({'error': 'Failed to fetch image'}, status=status.HTTP_502_BAD_GATEWAY)
+            logger.error(f"❌ Failed to fetch image: {response.status_code} - {response.text[:200]}")
+            return Response({'error': f'Failed to fetch image: {response.status_code}'}, status=status.HTTP_502_BAD_GATEWAY)
             
+    except requests.exceptions.Timeout:
+        logger.error(f"❌ Image fetch timeout: {image_url[:100]}")
+        return Response({'error': 'Request timeout'}, status=status.HTTP_504_GATEWAY_TIMEOUT)
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Image fetch error: {str(e)}")
+        return Response({'error': f'Network error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     except Exception as e:
+        logger.error(f"❌ Unexpected error in proxy_image: {str(e)}", exc_info=True)
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 

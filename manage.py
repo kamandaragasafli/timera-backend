@@ -1,7 +1,14 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """Django's command-line utility for administrative tasks."""
 import os
 import sys
+
+# Fix Windows console encoding for UTF-8 support
+# Only set environment variable, don't modify sys.stdout/stderr directly
+# to avoid conflicts with Django's stream handling
+if sys.platform == 'win32':
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 
 def main():

@@ -178,8 +178,9 @@ class FalAIService:
         
         try:
             # Prepare request payload
+            # Fal.ai API requires image_urls as a list
             payload = {
-                "image_url": image_url,
+                "image_urls": [image_url],  # Must be a list
                 "prompt": prompt,
                 "strength": strength,
             }
@@ -193,47 +194,66 @@ class FalAIService:
             logger.info(f"Job submitted: {job_id}")
             
             # Poll for result
-            max_wait_time = 120  # 2 minutes max
+            max_wait_time = 30  # 30 seconds max (reduced for faster failure)
             start_time = time.time()
             last_log_time = 0
+            poll_interval = 2  # Check every 2 seconds (reduced frequency)
             
             while time.time() - start_time < max_wait_time:
-                status_obj = status(application, job_id)
-                elapsed = int(time.time() - start_time)
-                
-                # Log every 10 seconds or on status change
-                if elapsed - last_log_time >= 10 or isinstance(status_obj, Completed):
-                    logger.info(f"Status check ({elapsed}s): type={type(status_obj).__name__}, is Completed={isinstance(status_obj, Completed)}")
-                    last_log_time = elapsed
-                
-                if isinstance(status_obj, Completed):
-                    result_data = result(application, job_id)
-                    image_url = None
-                    if isinstance(result_data, dict):
-                        image_url = result_data.get('image', {}).get('url') if isinstance(result_data.get('image'), dict) else result_data.get('image_url') or result_data.get('url')
-                    elif hasattr(result_data, 'get'):
-                        image_url = result_data.get('image_url') or result_data.get('url')
+                try:
+                    status_obj = status(application, job_id)
+                    elapsed = int(time.time() - start_time)
                     
-                    if image_url:
-                        logger.info(f"Image edited: {image_url}")
-                        return {
-                            'image_url': image_url,
-                            'status': 'completed',
-                            'job_id': job_id
-                        }
-                    else:
-                        logger.error(f"Image URL not found in result: {result_data}")
-                        raise ValueError("Image URL not found in API response")
-                
-                # If not Completed, continue polling (InProgress or Queued)
-                # Failed status will raise exception from status() call
-                
-                # Wait before next poll
-                time.sleep(1)
-                logger.debug(f"Waiting for image editing... ({int(time.time() - start_time)}s)")
+                    # Better status detection
+                    is_completed = isinstance(status_obj, Completed)
+                    status_type = type(status_obj).__name__
+                    
+                    # Log every 10 seconds or on status change
+                    if elapsed - last_log_time >= 10 or is_completed:
+                        logger.info(f"Status check ({elapsed}s): type={status_type}, is Completed={is_completed}")
+                        # Debug: log status object attributes
+                        if hasattr(status_obj, '__dict__'):
+                            logger.debug(f"Status object: {status_obj.__dict__}")
+                        last_log_time = elapsed
+                    
+                    # Check if completed by multiple methods
+                    if is_completed or (hasattr(status_obj, 'status') and status_obj.status == 'completed'):
+                        result_data = result(application, job_id)
+                        image_url = None
+                        if isinstance(result_data, dict):
+                            image_url = result_data.get('image', {}).get('url') if isinstance(result_data.get('image'), dict) else result_data.get('image_url') or result_data.get('url')
+                        elif hasattr(result_data, 'get'):
+                            image_url = result_data.get('image_url') or result_data.get('url')
+                        
+                        if image_url:
+                            logger.info(f"✅ Image edited: {image_url}")
+                            return {
+                                'image_url': image_url,
+                                'status': 'completed',
+                                'job_id': job_id
+                            }
+                        else:
+                            logger.error(f"Image URL not found in result: {result_data}")
+                            raise ValueError("Image URL not found in API response")
+                    
+                    # Check for failed status
+                    if hasattr(status_obj, 'status') and status_obj.status == 'failed':
+                        raise Exception(f"Fal.ai job failed: {getattr(status_obj, 'error', 'Unknown error')}")
+                    
+                    # If not Completed, continue polling (InProgress or Queued)
+                    # Wait before next poll
+                    time.sleep(poll_interval)
+                    
+                except Exception as status_error:
+                    # If status check fails, log and continue for a bit, then fail
+                    elapsed = int(time.time() - start_time)
+                    logger.warning(f"Status check error at {elapsed}s: {str(status_error)}")
+                    if elapsed > 15:  # If we've been waiting more than 15s and getting errors, fail faster
+                        raise TimeoutError(f"Fal.ai status check failed after {elapsed}s: {str(status_error)}")
+                    time.sleep(poll_interval)
             
             # Timeout
-            raise TimeoutError("Image editing timed out")
+            raise TimeoutError(f"Image editing timed out after {max_wait_time} seconds")
             
         except Exception as e:
             logger.error(f"Fal.ai image edit error: {e}", exc_info=True)

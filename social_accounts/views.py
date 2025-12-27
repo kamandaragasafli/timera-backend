@@ -92,7 +92,11 @@ class GetOAuthUrlView(APIView):
             backend_url = settings.BACKEND_URL
             redirect_uri = f"{backend_url}/api/social-accounts/callback/{platform}/"
             
-            # Required scopes: openid, profile, email, w_member_social (for posting)
+            # Required scopes: 
+            # - openid, profile, email: for user info
+            # - w_member_social: for personal account posting
+            # Note: w_organization_social requires LinkedIn approval - temporarily removed
+            # To enable Company Page posting, request this scope from LinkedIn Partner Program
             scopes = 'openid profile email w_member_social'
             
             auth_url = (
@@ -495,6 +499,14 @@ class OAuthCallbackView(APIView):
         account.set_access_token(access_token)
         account.save()
         print(f"✅ Saved LinkedIn account: {account.id} (created={created})")
+        
+        # NOTE: Company Page support requires w_organization_social scope
+        # This scope needs approval from LinkedIn Partner Program
+        # For now, only personal account posting is supported
+        # To enable Company Pages:
+        # 1. Apply for LinkedIn Partner Program
+        # 2. Request w_organization_social scope approval
+        # 3. Once approved, uncomment the code below
     
     def _handle_youtube_callback(self, request, platform, code, user_id):
         """Handle YouTube OAuth callback"""

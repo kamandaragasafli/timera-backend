@@ -84,8 +84,55 @@ class CompanyProfileSerializer(serializers.ModelSerializer):
         return None
     
     def create(self, validated_data):
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"[DEBUG] CompanyProfileSerializer.create() called")
+        logger.info(f"[DEBUG] validated_data keys: {list(validated_data.keys())}")
+        if 'logo' in validated_data:
+            logo = validated_data['logo']
+            logger.info(f"[DEBUG] Logo in validated_data: name={logo.name if hasattr(logo, 'name') else 'N/A'}, size={logo.size if hasattr(logo, 'size') else 'N/A'}")
+        
         validated_data['user'] = self.context['request'].user
-        return super().create(validated_data)
+        instance = super().create(validated_data)
+        
+        logger.info(f"[DEBUG] ✅ CompanyProfile created with ID: {instance.id}")
+        if instance.logo:
+            logger.info(f"[DEBUG] Logo saved: {instance.logo.name}")
+        
+        return instance
+    
+    def update(self, instance, validated_data):
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"[DEBUG] CompanyProfileSerializer.update() called")
+        logger.info(f"[DEBUG] Instance ID: {instance.id}")
+        logger.info(f"[DEBUG] Current logo: {instance.logo.name if instance.logo else 'None'}")
+        logger.info(f"[DEBUG] validated_data keys: {list(validated_data.keys())}")
+        
+        if 'logo' in validated_data:
+            logo = validated_data['logo']
+            logger.info(f"[DEBUG] ✅ Logo in validated_data:")
+            logger.info(f"[DEBUG]    - name: {logo.name if hasattr(logo, 'name') else 'N/A'}")
+            logger.info(f"[DEBUG]    - size: {logo.size if hasattr(logo, 'size') else 'N/A'} bytes")
+            logger.info(f"[DEBUG]    - content_type: {logo.content_type if hasattr(logo, 'content_type') else 'N/A'}")
+            logger.info(f"[DEBUG]    - type: {type(logo)}")
+        else:
+            logger.warning(f"[DEBUG] ⚠️ No 'logo' in validated_data")
+            logger.warning(f"[DEBUG]    - request.FILES: {bool(self.context.get('request', {}).FILES)}")
+            if self.context.get('request'):
+                logger.warning(f"[DEBUG]    - request.FILES keys: {list(self.context['request'].FILES.keys()) if self.context['request'].FILES else 'None'}")
+        
+        instance = super().update(instance, validated_data)
+        
+        logger.info(f"[DEBUG] ✅ CompanyProfile updated")
+        logger.info(f"[DEBUG] New logo: {instance.logo.name if instance.logo else 'None'}")
+        if instance.logo:
+            logger.info(f"[DEBUG] Logo URL: {instance.logo.url}")
+            logger.info(f"[DEBUG] Logo file exists: {instance.logo.storage.exists(instance.logo.name)}")
+        
+        return instance
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):

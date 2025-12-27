@@ -381,27 +381,16 @@ class IdeogramService:
         logger.debug(f"🎨 Ideogram service initialized with API key: {'*' * 10 if self.api_key else 'NOT SET'}")
     
     def create_design_for_post(self, post_content, company_profile=None, custom_prompt=None):
-        """Generate image with Nano Banana (Fal AI) using company brand information or custom AI prompt"""
+        """Generate image using Pexels API (free stock photos)"""
         
-        # TEMPORARY: Using Nano Banana instead of Ideogram (Ideogram limit reached)
-        # Ideogram code is preserved below for future use
+        # NANO BANANA DEACTIVATED - Using free Pexels API instead
+        logger.info("🖼️  Using Pexels API (free stock photos) for image generation")
+        
         try:
-            logger.info("🎨 Using Nano Banana (Fal AI) for image generation (Ideogram temporarily disabled)")
-            
-            # Import Fal AI service
-            from ai_helper.fal_ai_service import FalAIService
-            fal_service = FalAIService(user=self.user)
-            
-            # Check if Fal AI is available
-            fal_api_key = getattr(settings, 'FAL_AI_API_KEY', None)
-            if not fal_api_key or fal_api_key == 'your-fal-ai-api-key-here':
-                logger.warning("⚠️  Fal AI API key not configured, using fallback")
-                return self._create_fallback_design(post_content)
-            
-            # Clean and format text
+            # Clean and format text to extract keywords for search
             import re
             
-            # Remove emojis for cleaner prompt
+            # Remove emojis for cleaner search
             emoji_pattern = re.compile("["
                                        u"\U0001F600-\U0001F64F"
                                        u"\U0001F300-\U0001F5FF"
@@ -415,110 +404,146 @@ class IdeogramService:
             clean_content = re.sub(r'\n+', ' ', clean_content)
             clean_content = re.sub(r'\s+', ' ', clean_content).strip()
             
-            # Limit text for image (100 chars works best)
-            if len(clean_content) > 100:
-                display_text = clean_content[:97] + "..."
-            else:
-                display_text = clean_content
+            # Extract keywords from content (first 3-5 words)
+            words = clean_content.split()[:5]
+            search_query = ' '.join(words)
             
-            logger.debug(f"📝 Post content (for context): {display_text[:50]}...")
-            
-            # Build brand-aware prompt using company information
-            brand_style = ""
-            color_palette = ""
-            
-            if company_profile and company_profile.brand_analysis:
-                ba = company_profile.brand_analysis
-                
-                # Get design style
-                if ba.get('design_style'):
-                    brand_style = f", {ba.get('design_style')} style"
-                
-                # Get color scheme
-                colors = []
-                if ba.get('primary_color'):
-                    colors.append(ba.get('primary_color'))
-                if ba.get('color_palette'):
-                    colors.extend(ba.get('color_palette')[:3])  # Top 3 colors
-                
-                if colors:
-                    color_palette = f", color scheme: {' and '.join(colors)}"
-                
-                # Get emotional tone for better image generation
-                emotional_tone = ba.get('emotional_tone', '')
-                if emotional_tone:
-                    brand_style += f", {emotional_tone} mood"
-            
-            # Get industry context
-            industry_context = ""
+            # Get industry context for better search
             if company_profile:
-                industry_context = f" for {company_profile.industry} industry"
+                industry = company_profile.get_industry_display() if hasattr(company_profile, 'get_industry_display') else company_profile.industry
+                if industry and industry != 'N/A':
+                    search_query = f"{industry} {search_query}"
+                
+            # Limit search query to 50 chars
+            if len(search_query) > 50:
+                search_query = search_query[:50]
             
-            # Use custom AI-generated prompt if provided, otherwise create comprehensive prompt
-            if custom_prompt:
-                # AI already provided the perfect prompt
-                prompt = (
-                    f"{custom_prompt}, "
-                    f"Style: photorealistic, high quality photography{brand_style}, "
-                    f"professional, clean composition, modern{color_palette}, "
-                    f"NO TEXT, no words, no letters anywhere in the image, "
-                    f"text-free design, empty space for text overlay, "
-                    f"portrait format 4:5 (1080x1350), Instagram portrait format, social media ready, "
-                    f"visually appealing, engaging composition"
-                )
-                logger.info(f"✨ Using AI-generated prompt: {custom_prompt}")
+            logger.info(f"🔍 Searching for images with query: {search_query}")
+            
+            # Try multiple free APIs in order of preference
+            
+            # 1. Try Pexels API (requires API key but free, high quality)
+            pexels_api_key = getattr(settings, 'PEXELS_API_KEY', None)
+            if pexels_api_key and pexels_api_key != 'your-pexels-api-key-here':
+                try:
+                    pexels_url = f"https://api.pexels.com/v1/search"
+                    headers = {'Authorization': pexels_api_key}
+                    params = {
+                        'query': search_query,
+                        'per_page': 10,
+                        'orientation': 'portrait',
+                        'size': 'large'
+                    }
+                    
+                    logger.info(f"📤 Trying Pexels API...")
+                    response = requests.get(pexels_url, headers=headers, params=params, timeout=10)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get('photos') and len(data['photos']) > 0:
+                            import random
+                            photo = random.choice(data['photos'])
+                            image_url = photo['src']['large']
+                            
+                            logger.info(f"✅ Pexels API success! Image URL: {image_url}")
+                            return {
+                                'design_id': str(photo.get('id', '')),
+                                'design_url': image_url,
+                                'edit_url': '',
+                                'thumbnail_url': photo['src']['medium']
+                            }
+                    else:
+                        logger.warning(f"⚠️  Pexels API returned status {response.status_code}")
+                except Exception as e:
+                    logger.warning(f"⚠️  Pexels API error: {e}")
             else:
-                # Fallback to automatic prompt
-                prompt = (
-                    f"Create a professional social media background image about: {display_text}{industry_context}. "
-                    f"Style: photorealistic, high quality photography{brand_style}, "
-                    f"professional, clean composition, modern{color_palette}, "
-                    f"attractive colors, well-lit, premium quality, "
-                    f"NO TEXT, no words, no letters anywhere in the image, "
-                    f"text-free design, empty space for text overlay, "
-                    f"portrait format 4:5 (1080x1350), Instagram portrait format, social media ready, "
-                    f"visually appealing, engaging composition"
-                )
+                logger.info("ℹ️  Pexels API key not configured, trying Pixabay...")
             
-            # ==================== DETAILED LOGGING ====================
-            logger.info(f"")
-            logger.info(f"{'='*80}")
-            logger.info(f"🎨 NANO BANANA (FAL AI) API REQUEST")
-            logger.info(f"{'='*80}")
-            logger.info(f"📝 Post Content: {display_text}")
-            logger.info(f"")
-            logger.info(f"🎯 FULL PROMPT:")
-            logger.info(f"{prompt}")
-            logger.info(f"{'='*80}")
-            logger.info(f"📤 Sending request to Nano Banana API...")
-            # =========================================================
-            
-            # Use Fal AI Nano Banana for text-to-image
-            # Portrait format: 1080x1350 (4:5 ratio for Instagram)
-            result = fal_service.text_to_image(
-                prompt=prompt,
-                width=1080,
-                height=1350,
-                num_images=1
-            )
-            
-            if result and result.get('image_url'):
-                image_url = result['image_url']
-                logger.info(f"✅ SUCCESS! Image URL: {image_url}")
-                logger.info(f"{'='*80}")
-                logger.info(f"")
-                return {
-                    'design_id': result.get('job_id', ''),
-                    'design_url': image_url,
-                    'edit_url': '',
-                    'thumbnail_url': image_url
-                }
+            # 2. Try Pixabay API (requires API key but free, huge library)
+            pixabay_api_key = getattr(settings, 'PIXABAY_API_KEY', None)
+            if pixabay_api_key and pixabay_api_key != 'your-pixabay-api-key-here':
+                try:
+                    pixabay_url = f"https://pixabay.com/api/"
+                    params = {
+                        'key': pixabay_api_key,
+                        'q': search_query,
+                        'image_type': 'photo',
+                        'orientation': 'vertical',
+                        'per_page': 20,
+                        'safesearch': 'true'
+                    }
+                    
+                    logger.info(f"📤 Trying Pixabay API...")
+                    response = requests.get(pixabay_url, params=params, timeout=10)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get('hits') and len(data['hits']) > 0:
+                            import random
+                            photo = random.choice(data['hits'])
+                            # Use largeImageURL for better quality
+                            image_url = photo.get('largeImageURL') or photo.get('webformatURL')
+                            
+                            logger.info(f"✅ Pixabay API success! Image URL: {image_url}")
+                            return {
+                                'design_id': str(photo.get('id', '')),
+                                'design_url': image_url,
+                                'edit_url': '',
+                                'thumbnail_url': photo.get('webformatURL', image_url)
+                            }
+                        else:
+                            logger.warning(f"⚠️  Pixabay API returned no results")
+                    else:
+                        logger.warning(f"⚠️  Pixabay API returned status {response.status_code}")
+                except Exception as e:
+                    logger.warning(f"⚠️  Pixabay API error: {e}")
             else:
-                logger.warning(f"⚠️  Nano Banana returned no image URL")
-                return self._create_fallback_design(post_content)
+                logger.info("ℹ️  Pixabay API key not configured, trying Unsplash...")
+            
+            # 3. Try Unsplash API (requires API key but free, very high quality)
+            unsplash_api_key = getattr(settings, 'UNSPLASH_API_KEY', None)
+            if unsplash_api_key and unsplash_api_key != 'your-unsplash-api-key-here':
+                try:
+                    unsplash_url = f"https://api.unsplash.com/search/photos"
+                    headers = {'Authorization': f'Client-ID {unsplash_api_key}'}
+                    params = {
+                        'query': search_query,
+                        'per_page': 10,
+                        'orientation': 'portrait'
+                    }
+                    
+                    logger.info(f"📤 Trying Unsplash API...")
+                    response = requests.get(unsplash_url, headers=headers, params=params, timeout=10)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get('results') and len(data['results']) > 0:
+                            import random
+                            photo = random.choice(data['results'])
+                            # Use regular URL (not raw) for better compatibility
+                            image_url = photo['urls']['regular']  # 1080x1080
+                            
+                            logger.info(f"✅ Unsplash API success! Image URL: {image_url}")
+                            return {
+                                'design_id': str(photo.get('id', '')),
+                                'design_url': image_url,
+                                'edit_url': '',
+                                'thumbnail_url': photo['urls']['thumb']
+                            }
+                        else:
+                            logger.warning(f"⚠️  Unsplash API returned no results")
+                    else:
+                        logger.warning(f"⚠️  Unsplash API returned status {response.status_code}")
+                except Exception as e:
+                    logger.warning(f"⚠️  Unsplash API error: {e}")
+            else:
+                logger.info("ℹ️  Unsplash API key not configured, using Unsplash Source fallback...")
+            
+            # 4. Final fallback: Unsplash Source (no API key needed, but random images)
+            return self._create_fallback_design(post_content, search_query)
                 
         except Exception as e:
-            logger.error(f"❌ Nano Banana API Error: {e}", exc_info=True)
+            logger.error(f"❌ Error in image generation: {e}", exc_info=True)
             return self._create_fallback_design(post_content)
         
         # ========== IDEOGRAM CODE (PRESERVED FOR FUTURE USE) ==========
@@ -567,25 +592,28 @@ class IdeogramService:
         return self._create_fallback_design(post_content)
         """
     
-    def _create_fallback_design(self, post_content):
-        """Create fallback design data when Canva API fails"""
+    def _create_fallback_design(self, post_content, search_query=None):
+        """Create fallback design using Picsum Photos (free, no API key needed)"""
         
-        # Use Unsplash for random business/social media images
-        # These are free, high-quality stock photos
-        keywords = ['business', 'office', 'technology', 'team', 'success', 'growth']
+        # Unsplash Source API is deprecated (503 errors)
+        # Use Picsum Photos instead - free, reliable, no API key needed
         import random
-        keyword = random.choice(keywords)
         
-        # Unsplash Source API - free, no auth needed
-        unsplash_url = f'https://source.unsplash.com/1080x1350/?{keyword},professional'
+        # Generate random image ID for variety (1-1000)
+        image_id = random.randint(1, 1000)
         
-        logger.info(f"🖼️  Using Unsplash image: {keyword}")
+        # Picsum Photos - free random images, reliable service
+        # Format: 1080x1350 (Instagram portrait format)
+        # Use seed for consistent images per post
+        picsum_url = f'https://picsum.photos/seed/{image_id}/1080/1350'
+        
+        logger.info(f"🖼️  Using Picsum Photos (fallback): image_id={image_id}")
         
         return {
-            'design_id': '',
-            'design_url': '',
+            'design_id': str(image_id),
+            'design_url': picsum_url,
             'edit_url': '',
-            'thumbnail_url': unsplash_url
+            'thumbnail_url': picsum_url
         }
     
 
