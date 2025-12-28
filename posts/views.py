@@ -1389,76 +1389,151 @@ class SchedulePostView(APIView):
             'platforms': created_platforms
         }, status=status.HTTP_200_OK)
 
+from urllib.parse import urlparse
+import socket
+import ipaddress
+import requests
+import logging
 
-@api_view(['GET'])
-@permission_classes([])  # Public endpoint for image proxying
-def proxy_image(request):
-    """Proxy external images to bypass CORS restrictions"""
-    from django.http import HttpResponse
-    import logging
-    
-    logger = logging.getLogger(__name__)
-    
-    image_url = request.GET.get('url')
-    
-    if not image_url:
-        logger.warning("❌ Proxy image: URL parameter missing")
-        return Response({'error': 'URL parameter required'}, status=status.HTTP_400_BAD_REQUEST)
-    
-    logger.info(f"🖼️ Proxy image request: {image_url[:100]}...")
-    
-    # Security: Only allow social media CDN URLs (Instagram, LinkedIn, Facebook)
-    allowed_domains = ['cdninstagram.com', 'instagram.com', 'licdn.com', 'linkedin.com', 'fbcdn.net', 'facebook.com']
-    if not (image_url.startswith('https://') and any(domain in image_url for domain in allowed_domains)):
-        logger.warning(f"❌ Proxy image: Invalid URL (not from allowed social media CDN): {image_url[:100]}")
-        return Response({'error': 'Invalid image URL'}, status=status.HTTP_400_BAD_REQUEST)
-    
+from django.http import HttpResponse
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework import permissions, status
+from rest_framework.response import Response
+
+logger = logging.getLogger(__name__)
+
+# Yalnız bu host-lara icazə verilir (exact və ya subdomain)
+ALLOWED_HOST_SUFFIXES = (
+    "cdninstagram.com",
+    "instagram.com",
+    "licdn.com",
+    "linkedin.com",
+    "fbcdn.net",
+    "facebook.com",
+)
+
+MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5MB limit (lazıma görə tənzimləyin)
+CONNECT_TIMEOUT = 3.05
+READ_TIMEOUT = 10
+
+def host_is_allowed(hostname: str) -> bool:
+    """Yalnız icazə verilmiş domain və ya onun subdomain-ləri."""
+    h = (hostname or "").lower().rstrip(".")
+    return any(h == d or h.endswith("." + d) for d in ALLOWED_HOST_SUFFIXES)
+
+def resolves_to_public_ip(hostname: str) -> bool:
+    """DNS rebinding / SSRF qoruması: host yalnız public IP-lərə resolve olmalıdır."""
     try:
-        # Fetch the image with proper headers
-        logger.info(f"📥 Fetching image from: {image_url[:100]}...")
-        
-        # Determine referer based on URL
-        referer = 'https://www.instagram.com/'
-        if 'licdn.com' in image_url or 'linkedin.com' in image_url:
-            referer = 'https://www.linkedin.com/'
-        elif 'fbcdn.net' in image_url or 'facebook.com' in image_url:
-            referer = 'https://www.facebook.com/'
-        
-        response = requests.get(image_url, timeout=15, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
-            'Referer': referer,
-            'Accept-Language': 'en-US,en;q=0.9',
-        }, allow_redirects=True, stream=True)
-        
-        logger.info(f"📊 Image fetch response: {response.status_code}, Content-Type: {response.headers.get('Content-Type', 'unknown')}")
-        
-        if response.status_code == 200:
-            # Read the image content
-            image_content = response.content
-            logger.info(f"✅ Image fetched successfully: {len(image_content)} bytes")
-            
-            # Return the image with CORS headers
-            content_type = response.headers.get('Content-Type', 'image/jpeg')
-            http_response = HttpResponse(image_content, content_type=content_type)
-            http_response['Access-Control-Allow-Origin'] = '*'
-            http_response['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
-            http_response['Access-Control-Allow-Headers'] = 'Content-Type'
-            http_response['Cache-Control'] = 'public, max-age=3600'  # Cache for 1 hour
-            return http_response
-        else:
-            logger.error(f"❌ Failed to fetch image: {response.status_code} - {response.text[:200]}")
-            return Response({'error': f'Failed to fetch image: {response.status_code}'}, status=status.HTTP_502_BAD_GATEWAY)
-            
+        infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        return False
+
+    for _, _, _, _, sockaddr in infos:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+        ):
+            return False
+    return True
+
+def pick_referer(hostname: str) -> str:
+    h = (hostname or "").lower()
+    if h.endswith("licdn.com") or h.endswith("linkedin.com"):
+        return "https://www.linkedin.com/"
+    if h.endswith("fbcdn.net") or h.endswith("facebook.com"):
+        return "https://www.facebook.com/"
+    return "https://www.instagram.com/"
+
+@api_view(["GET"])
+# ✅ TÖVSİYƏ OLUNUR: auth tələb edin ki, istənilən bot bandwidth-inizi istifadə etməsin
+# Əgər mütləq public qalmalıdırsa, [] edin, amma EDGE throttling-i KEÇMƏYİN
+@permission_classes([permissions.IsAuthenticated])
+def proxy_image(request):
+    """
+    Təhlükəsiz image proxy:
+    - Strict hostname allowlist (substring bypass yoxdur)
+    - Redirect-lər yoxdur
+    - Private/reserved IP-lər bloklanır
+    - Stream + ölçü limiti
+    - image/* content-type məcburidir
+    """
+    image_url = (request.GET.get("url") or "").strip()
+
+    if not image_url:
+        logger.warning("Proxy image: URL parametri yoxdur")
+        return Response({"error": "URL parametri tələb olunur"}, status=status.HTTP_400_BAD_REQUEST)
+
+    # URL parse və yoxlama
+    try:
+        parsed = urlparse(image_url)
+    except Exception:
+        return Response({"error": "Yanlış URL"}, status=status.HTTP_400_BAD_REQUEST)
+
+    if parsed.scheme != "https" or not parsed.hostname:
+        return Response({"error": "Yalnız https URL-lərə icazə verilir"}, status=status.HTTP_400_BAD_REQUEST)
+
+    hostname = parsed.hostname.lower().rstrip(".")
+
+    # Strict host allowlist
+    if not host_is_allowed(hostname):
+        logger.warning("Proxy image: icazəsiz host: %s", hostname)
+        return Response({"error": "Host icazəli deyil"}, status=status.HTTP_400_BAD_REQUEST)
+
+    # DNS rebinding / internal IP qoruması
+    if not resolves_to_public_ip(hostname):
+        logger.warning("Proxy image: bloklanmış host (public IP deyil): %s", hostname)
+        return Response({"error": "Bloklanmış host"}, status=status.HTTP_400_BAD_REQUEST)
+
+    referer = pick_referer(hostname)
+
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "image/*,*/*;q=0.8",
+        "Referer": referer,
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    try:
+        resp = requests.get(
+            image_url,
+            headers=headers,
+            timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+            stream=True,
+            allow_redirects=False,  # ✅ KRİTİK
+        )
     except requests.exceptions.Timeout:
-        logger.error(f"❌ Image fetch timeout: {image_url[:100]}")
-        return Response({'error': 'Request timeout'}, status=status.HTTP_504_GATEWAY_TIMEOUT)
-    except requests.exceptions.RequestException as e:
-        logger.error(f"❌ Image fetch error: {str(e)}")
-        return Response({'error': f'Network error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    except Exception as e:
-        logger.error(f"❌ Unexpected error in proxy_image: {str(e)}", exc_info=True)
-        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"error": "Request timeout"}, status=status.HTTP_504_GATEWAY_TIMEOUT)
+    except requests.exceptions.RequestException:
+        return Response({"error": "Şəbəkə xətası"}, status=status.HTTP_502_BAD_GATEWAY)
+
+    if resp.status_code != 200:
+        return Response({"error": f"Image fetch uğursuzdur: {resp.status_code}"}, status=status.HTTP_502_BAD_GATEWAY)
+
+    content_type = (resp.headers.get("Content-Type") or "").lower()
+    if not content_type.startswith("image/"):
+        return Response({"error": "Upstream content image deyil"}, status=status.HTTP_400_BAD_REQUEST)
+
+    total = 0
+    chunks = []
+    for chunk in resp.iter_content(chunk_size=8192):
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > MAX_IMAGE_BYTES:
+            return Response({"error": "Image çox böyükdür"}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        chunks.append(chunk)
+
+    body = b"".join(chunks)
+    http_resp = HttpResponse(body, content_type=content_type)
+    # ❌ Production-da '*' istifadə ETMƏYİN
+    http_resp["Access-Control-Allow-Origin"] = "https://timera.az"
+    http_resp["Cache-Control"] = "public, max-age=3600"
+    return http_resp
+
 
 
 class PostPerformanceView(APIView):
