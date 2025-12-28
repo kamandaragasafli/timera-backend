@@ -1462,6 +1462,8 @@ def proxy_image(request):
     - image/* content-type məcburidir
     """
     image_url = (request.GET.get("url") or "").strip()
+    
+    logger.info(f"🖼️ Proxy image request: {image_url[:100]}")
 
     if not image_url:
         logger.warning("Proxy image: URL parametri yoxdur")
@@ -1529,8 +1531,16 @@ def proxy_image(request):
 
     body = b"".join(chunks)
     http_resp = HttpResponse(body, content_type=content_type)
-    # ❌ Production-da '*' istifadə ETMƏYİN
-    http_resp["Access-Control-Allow-Origin"] = "https://timera.az"
+    
+    # CORS headers - development və production
+    origin = request.META.get('HTTP_ORIGIN', '')
+    if origin and (origin.startswith('http://localhost:') or origin.startswith('https://timera.az')):
+        http_resp["Access-Control-Allow-Origin"] = origin
+    else:
+        # Production default
+        http_resp["Access-Control-Allow-Origin"] = "https://timera.az"
+    
+    http_resp["Access-Control-Allow-Credentials"] = "true"
     http_resp["Cache-Control"] = "public, max-age=3600"
     return http_resp
 

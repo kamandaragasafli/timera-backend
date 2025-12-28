@@ -36,7 +36,7 @@ DEBUG = config("DEBUG", default=False, cast=bool)
 # Comma-separated env, e.g.: "timera.az,www.timera.az,api.timera.az"
 ALLOWED_HOSTS = [
     h.strip()
-    for h in config("ALLOWED_HOSTS", default="timera.az,www.timera.az").split(",")
+    for h in config("ALLOWED_HOSTS", default="timera.az,www.timera.az,localhost,127.0.0.1").split(",")
     if h.strip()
 ]
 
