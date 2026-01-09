@@ -593,6 +593,1063 @@ IMPORTANT:
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class GenerateComplementaryColorsView(APIView):
+    """Generate complementary colors based on primary colors and brand analysis"""
+    
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        try:
+            primary_color = request.data.get('primary_color')
+            color_palette = request.data.get('color_palette', [])
+            brand_personality = request.data.get('brand_personality', [])
+            design_style = request.data.get('design_style', '')
+            
+            if not primary_color:
+                return Response({
+                    'error': 'Primary color is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            logger.info(f"Generating complementary colors for user: {request.user.email}")
+            logger.info(f"Primary color: {primary_color}")
+            
+            # Initialize OpenAI client
+            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+            
+            # Build context
+            context_info = f"Primary Color: {primary_color}\n"
+            if color_palette:
+                context_info += f"Color Palette: {', '.join(color_palette)}\n"
+            if brand_personality:
+                context_info += f"Brand Personality: {', '.join(brand_personality)}\n"
+            if design_style:
+                context_info += f"Design Style: {design_style}\n"
+            
+            # Create prompt for complementary colors
+            prompt = f"""You are a color theory expert. Generate 3 complementary colors that work harmoniously with the given brand colors.
+
+{context_info}
+
+Requirements:
+- Generate exactly 3 complementary colors in HEX format
+- Colors should complement the primary color and existing palette
+- Consider the brand personality and design style
+- Return ONLY a valid JSON array of hex codes, no explanations
+
+Return format (JSON array only):
+["#HEX1", "#HEX2", "#HEX3"]"""
+            
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=200,
+                temperature=0.7
+            )
+            
+            response_text = response.choices[0].message.content.strip()
+            
+            # Remove markdown code blocks if present
+            if '```' in response_text:
+                parts = response_text.split('```')
+                if len(parts) >= 3:
+                    response_text = parts[1]
+                    if response_text.lower().startswith('json'):
+                        response_text = response_text[4:]
+                elif len(parts) == 2:
+                    response_text = parts[1]
+            
+            response_text = response_text.strip()
+            
+            # Parse JSON
+            try:
+                complementary_colors = json.loads(response_text)
+                if not isinstance(complementary_colors, list) or len(complementary_colors) != 3:
+                    raise ValueError("Response must be an array of 3 hex codes")
+                
+                # Validate hex codes
+                hex_pattern = re.compile(r'^#[0-9A-Fa-f]{6}$')
+                for color in complementary_colors:
+                    if not hex_pattern.match(color):
+                        raise ValueError(f"Invalid hex code: {color}")
+                
+                logger.info(f"Successfully generated complementary colors: {complementary_colors}")
+                
+                return Response({
+                    'complementary_colors': complementary_colors,
+                    'status': 'success'
+                }, status=status.HTTP_200_OK)
+                
+            except json.JSONDecodeError as e:
+                # Try to extract JSON manually
+                json_match = re.search(r'\[.*?\]', response_text, re.DOTALL)
+                if json_match:
+                    complementary_colors = json.loads(json_match.group(0))
+                    return Response({
+                        'complementary_colors': complementary_colors,
+                        'status': 'success'
+                    }, status=status.HTTP_200_OK)
+                else:
+                    raise ValueError(f"Failed to parse JSON: {str(e)}")
+            
+        except ValueError as e:
+            logger.error(f"Validation error: {str(e)}")
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except openai.APIError as e:
+            logger.error(f"OpenAI API error: {str(e)}")
+            return Response({
+                'error': f'OpenAI API error: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            logger.error(f"Error generating complementary colors: {str(e)}", exc_info=True)
+            return Response({
+                'error': f'Failed to generate complementary colors: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class GenerateSmartPromptView(APIView):
+    """Generate smart content prompt based on product image and company info"""
+    
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        try:
+            product_image = request.FILES.get('product_image')
+            company_name = request.data.get('company_name', '')
+            industry = request.data.get('industry', '')
+            target_audience = request.data.get('target_audience', '')
+            brand_personality = request.data.get('brand_personality', '')
+            user_notes = request.data.get('user_notes', '')
+            
+            logger.info(f"Generating smart prompt for user: {request.user.email}")
+            
+            # Initialize OpenAI client
+            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+            
+            # Prepare messages
+            messages = [
+                {
+                    "role": "system",
+                    "content": "Sən peşəkar sosial media content strategistisən. Şəkil və şirkət məlumatlarına əsasən professional content generation prompt-ları yazırsan."
+                }
+            ]
+            
+            # If image provided, analyze it first
+            image_analysis = None
+            if product_image:
+                logger.info(f"📸 Analyzing product image...")
+                
+                # Convert image to base64
+                image_data = product_image.read()
+                base64_image = base64.b64encode(image_data).decode('utf-8')
+                
+                # Analyze image with Vision API
+                vision_messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Şəkildəki məhsulu detallı analiz et. Məhsul növü, rəng, dizayn, xüsusiyyətlər, hədəf auditoriya, və sosial media üçün necə təqdim etmək olar haqqında məlumat ver. Azərbaycan dilində cavab ver."
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{base64_image}"
+                                }
+                            }
+                        ]
+                    }
+                ]
+                
+                vision_response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=vision_messages,
+                    max_tokens=500
+                )
+                
+                image_analysis = vision_response.choices[0].message.content.strip()
+                logger.info(f"✅ Image analyzed: {len(image_analysis)} chars")
+            
+            # Build context
+            context = ""
+            if company_name:
+                context += f"Şirkət: {company_name}\n"
+            if industry:
+                context += f"Sənaye: {industry}\n"
+            if target_audience:
+                context += f"Hədəf Auditoriya: {target_audience}\n"
+            if brand_personality:
+                context += f"Brend Şəxsiyyəti: {brand_personality}\n"
+            if image_analysis:
+                context += f"\nMəhsul Şəkli Analizi:\n{image_analysis}\n"
+            if user_notes:
+                context += f"\nİstifadəçi Qeydləri:\n{user_notes}\n"
+            
+            # Generate smart prompt
+            prompt_request = f"""Aşağıdakı məlumatlara əsasən, AI content generator üçün professional və effektiv bir prompt yaz.
+
+{context}
+
+Tələblər:
+- Prompt Azərbaycan dilində olmalıdır
+- Məhsula və şirkətə uyğun olmalıdır
+- Kreativ və engaging content yaratmaq üçün
+- 3-5 cümlə, konkret və aydın
+- Hədəf auditoriyaya uyğun ton
+- Əgər məhsul şəkli varsa, onun xüsusiyyətlərini vurğula
+
+Yalnız prompt-u qaytar, başqa heç nə yazma."""
+            
+            messages.append({
+                "role": "user",
+                "content": prompt_request
+            })
+            
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                max_tokens=300,
+                temperature=0.8
+            )
+            
+            smart_prompt = response.choices[0].message.content.strip()
+            smart_prompt = smart_prompt.strip('"\'')
+            
+            logger.info(f"✅ Generated smart prompt: {len(smart_prompt)} chars")
+            
+            return Response({
+                'smart_prompt': smart_prompt,
+                'image_analysis': image_analysis,
+                'status': 'success'
+            }, status=status.HTTP_200_OK)
+            
+        except openai.APIError as e:
+            logger.error(f"OpenAI API error: {str(e)}")
+            return Response({
+                'error': f'OpenAI API error: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            logger.error(f"Error generating smart prompt: {str(e)}", exc_info=True)
+            return Response({
+                'error': f'Failed to generate smart prompt: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class CompetitorAnalysisView(APIView):
+    """Analyze competitor's social media profile and compare with user's profile"""
+    
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        try:
+            competitor_url = request.data.get('competitor_url', '')
+            competitor_name = request.data.get('competitor_name', '')
+            your_profile_data = request.data.get('your_profile', {})
+            analysis_depth = request.data.get('analysis_depth', 'standard')  # quick, standard, deep
+            
+            if not competitor_url and not competitor_name:
+                return Response({
+                    'error': 'Competitor URL or name is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            logger.info(f"🔍 Competitor Analysis for user: {request.user.email}")
+            logger.info(f"   Competitor URL: {competitor_url}")
+            logger.info(f"   Analysis Depth: {analysis_depth}")
+            
+            # Detect platform
+            platform = None
+            if competitor_url:
+                if 'instagram.com' in competitor_url:
+                    platform = 'Instagram'
+                elif 'facebook.com' in competitor_url or 'fb.com' in competitor_url:
+                    platform = 'Facebook'
+                elif 'linkedin.com' in competitor_url:
+                    platform = 'LinkedIn'
+            
+            # Try to scrape competitor profile
+            competitor_data = None
+            scraping_attempted = False
+            
+            if competitor_url and platform:
+                logger.info(f"📡 Attempting to scrape {platform} profile...")
+                scraping_attempted = True
+                
+                try:
+                    if platform == 'Instagram':
+                        competitor_data = scrape_instagram_with_apify(competitor_url)
+                    elif platform == 'Facebook':
+                        competitor_data = scrape_facebook_with_apify(competitor_url)
+                    elif platform == 'LinkedIn':
+                        if '/company/' in competitor_url:
+                            competitor_data = scrape_linkedin_company_with_apify(competitor_url)
+                        else:
+                            competitor_data = scrape_linkedin_with_apify(competitor_url)
+                    
+                    if competitor_data:
+                        logger.info(f"✅ Successfully scraped competitor profile")
+                except Exception as scraping_error:
+                    logger.warning(f"⚠️ Scraping failed: {str(scraping_error)}")
+            
+            # Get company profile for comparison
+            try:
+                from accounts.models import CompanyProfile
+                user_company = CompanyProfile.objects.filter(user=request.user).first()
+            except Exception as e:
+                logger.warning(f"Could not fetch user company profile: {str(e)}")
+                user_company = None
+            
+            # Build analysis context
+            context_info = ""
+            
+            # Competitor info
+            if competitor_data:
+                context_info += "Rəqib Profil (Real Data):\n"
+                context_info += f"- Platform: {platform}\n"
+                context_info += f"- Username: {competitor_data.get('username', competitor_data.get('name', 'N/A'))}\n"
+                context_info += f"- Followers: {competitor_data.get('followersCount', competitor_data.get('followers', 'N/A'))}\n"
+                context_info += f"- Following: {competitor_data.get('followsCount', competitor_data.get('following', 'N/A'))}\n"
+                context_info += f"- Posts: {competitor_data.get('postsCount', competitor_data.get('posts_count', 'N/A'))}\n"
+                context_info += f"- Bio: {competitor_data.get('biography', competitor_data.get('bio', competitor_data.get('about', 'N/A')))}\n"
+                
+                # Recent posts info if available
+                if 'latest_posts' in competitor_data or 'recentPosts' in competitor_data:
+                    posts = competitor_data.get('latest_posts', competitor_data.get('recentPosts', []))
+                    if posts and len(posts) > 0:
+                        context_info += f"- Son paylaşımlar sayı: {len(posts)}\n"
+                        # Calculate average engagement if available
+                        total_likes = sum(post.get('likesCount', post.get('likes', 0)) for post in posts[:10])
+                        total_comments = sum(post.get('commentsCount', post.get('comments', 0)) for post in posts[:10])
+                        if total_likes > 0 or total_comments > 0:
+                            context_info += f"- Orta likes (son 10 post): {total_likes / min(len(posts), 10):.0f}\n"
+                            context_info += f"- Orta comments (son 10 post): {total_comments / min(len(posts), 10):.0f}\n"
+            else:
+                context_info += f"Rəqib: {competitor_name or competitor_url}\n"
+                context_info += "- Real data əlçatan deyil, AI təxmini analiz ediləcək\n"
+            
+            # Your profile info
+            if your_profile_data:
+                context_info += "\nSizin Profil:\n"
+                for key, value in your_profile_data.items():
+                    context_info += f"- {key}: {value}\n"
+            elif user_company:
+                context_info += "\nSizin Şirkət:\n"
+                context_info += f"- Ad: {user_company.company_name}\n"
+                context_info += f"- Sənaye: {user_company.industry}\n"
+                context_info += f"- Hədəf Auditoriya: {user_company.target_audience}\n"
+            
+            # Initialize OpenAI client
+            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+            
+            # Create comprehensive prompt
+            prompt = f"""Sən peşəkar sosial media və rəqabət analitikisən. Aşağıdakı məlumatlara əsasən detallı rəqib analizi hazırla.
+
+{context_info}
+
+Aşağıdakı formatta JSON cavab qaytar (yalnız JSON, başqa mətn yox):
+
+{{
+  "competitor_overview": {{
+    "name": "Rəqib adı",
+    "platform": "Platform adı",
+    "follower_count": 0,
+    "engagement_rate": "X%",
+    "posting_frequency": "Həftədə X dəfə",
+    "overall_score": 85,
+    "strengths": ["Güclü tərəf 1", "Güclü tərəf 2"],
+    "weaknesses": ["Zəif tərəf 1", "Zəif tərəf 2"]
+  }},
+  "content_strategy": {{
+    "content_types": [
+      {{
+        "type": "Video/Image/Carousel/Reel",
+        "percentage": 40,
+        "performance": "Yüksək/Orta/Aşağı"
+      }}
+    ],
+    "themes": ["Tema 1", "Tema 2", "Tema 3"],
+    "tone": "Professional/Casual/Creative",
+    "language_style": "Formal/Informal/Mixed"
+  }},
+  "engagement_analysis": {{
+    "average_likes": 0,
+    "average_comments": 0,
+    "average_shares": 0,
+    "engagement_rate": "X%",
+    "best_performing_content": "Content növü",
+    "peak_engagement_times": ["Saat aralığı"]
+  }},
+  "hashtag_strategy": {{
+    "most_used_hashtags": ["#hashtag1", "#hashtag2"],
+    "hashtag_count_per_post": "X-Y arası",
+    "hashtag_effectiveness": "Yüksək/Orta/Aşağı",
+    "recommendations": ["Tövsiyə 1", "Tövsiyə 2"]
+  }},
+  "audience_insights": {{
+    "target_demographic": "Hədəf auditoriya",
+    "engagement_patterns": "Engagement patterns",
+    "follower_quality": "Yüksək/Orta/Aşağı",
+    "growth_trend": "Artır/Sabit/Azalır"
+  }},
+  "competitive_advantages": [
+    {{
+      "advantage": "Rəqibin üstünlüyü",
+      "impact": "Yüksək/Orta/Aşağı",
+      "how_they_do_it": "Necə edirlər",
+      "how_you_can_compete": "Siz necə rəqabət apara bilərsiniz"
+    }}
+  ],
+  "opportunities_for_you": [
+    {{
+      "opportunity": "İmkan",
+      "difficulty": "Asan/Orta/Çətin",
+      "potential_impact": "Yüksək/Orta/Aşağı",
+      "action_steps": ["Addım 1", "Addım 2"]
+    }}
+  ],
+  "content_gaps": [
+    {{
+      "gap": "Rəqibin etmədiyi şey",
+      "why_important": "Niyə vacib",
+      "how_to_leverage": "Necə istifadə etmək"
+    }}
+  ],
+  "recommendations": [
+    {{
+      "category": "Content/Engagement/Timing/Hashtags",
+      "recommendation": "Tövsiyə",
+      "priority": "Yüksək/Orta/Aşağı",
+      "expected_result": "Gözlənilən nəticə"
+    }}
+  ],
+  "summary": {{
+    "overall_assessment": "Ümumi qiymətləndirmə",
+    "key_takeaways": ["Əsas çıxarış 1", "Əsas çıxarış 2"],
+    "immediate_actions": ["Dərhal etməli 1", "Dərhal etməli 2"],
+    "long_term_strategy": "Uzunmüddətli strategiya"
+  }}
+}}
+
+Tələblər:
+- Real dataya əsasən (əgər varsa) dəqiq analiz
+- Praktik və tətbiq oluna bilən tövsiyələr
+- Azərbaycan dilində
+- Müqayisəli təhlil (sizin profil vs rəqib)
+- Actionable insights
+- Yalnız JSON qaytar, başqa mətn yazma"""
+            
+            # Determine max_tokens based on analysis depth
+            max_tokens_map = {
+                'quick': 2000,
+                'standard': 3000,
+                'deep': 4500
+            }
+            max_tokens = max_tokens_map.get(analysis_depth, 3000)
+            
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Sən peşəkar sosial media və rəqabət analitikisən. Həmişə JSON formatında detallı analiz verirsən."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=max_tokens,
+                temperature=0.7,
+                response_format={"type": "json_object"}
+            )
+            
+            # Parse JSON response
+            analysis_data = json.loads(response.choices[0].message.content.strip())
+            
+            logger.info(f"✅ Successfully analyzed competitor")
+            
+            return Response({
+                'analysis': analysis_data,
+                'competitor_data': competitor_data if competitor_data else None,
+                'scraping_attempted': scraping_attempted,
+                'scraping_successful': competitor_data is not None,
+                'platform': platform,
+                'status': 'success'
+            }, status=status.HTTP_200_OK)
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error: {str(e)}")
+            return Response({
+                'error': 'Failed to parse analysis response'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except ValueError as e:
+            logger.error(f"Validation error: {str(e)}")
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except openai.APIError as e:
+            logger.error(f"OpenAI API error: {str(e)}")
+            return Response({
+                'error': f'OpenAI API error: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            logger.error(f"Error analyzing competitor: {str(e)}", exc_info=True)
+            return Response({
+                'error': f'Failed to analyze competitor: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class AnalyzeTrendsView(APIView):
+    """Analyze current trends for specific industry and target audience"""
+    
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        try:
+            company_name = request.data.get('company_name', '')
+            industry = request.data.get('industry', '')
+            target_audience = request.data.get('target_audience', '')
+            keywords = request.data.get('keywords', [])
+            region = request.data.get('region', 'Azerbaijan')
+            
+            logger.info(f"Analyzing trends for user: {request.user.email}")
+            logger.info(f"Industry: {industry}, Region: {region}")
+            
+            if not industry:
+                return Response({
+                    'error': 'Industry is required for trend analysis'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Initialize OpenAI client
+            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+            
+            # Get current date info
+            from datetime import datetime
+            current_date = datetime.now()
+            current_month = current_date.strftime('%B')
+            current_year = current_date.year
+            
+            # Build context
+            context_info = f"Şirkət: {company_name or 'N/A'}\n"
+            context_info += f"Sənaye: {industry}\n"
+            if target_audience:
+                context_info += f"Hədəf Auditoriya: {target_audience}\n"
+            if keywords:
+                context_info += f"Açar Sözlər: {', '.join(keywords)}\n"
+            context_info += f"Region: {region}\n"
+            context_info += f"Hazırkı tarix: {current_month} {current_year}\n"
+            
+            # Create comprehensive prompt
+            prompt = f"""Sən peşəkar sosial media və marketinq trend analitikisən. Aşağıdakı məlumatlara əsasən detallı trend analizi hazırla.
+
+{context_info}
+
+Aşağıdakı formatta JSON cavab qaytar (yalnız JSON, başqa mətn yox):
+
+{{
+  "current_trends": [
+    {{
+      "title": "Trend adı",
+      "description": "Trendin təsviri",
+      "relevance_score": 95,
+      "why_relevant": "Niyə bu trend relevant",
+      "action_items": ["Nə etmək lazım 1", "Nə etmək lazım 2"]
+    }}
+  ],
+  "seasonal_opportunities": [
+    {{
+      "event": "Bayram və ya event",
+      "date": "Təxmini tarix",
+      "content_ideas": ["İdeya 1", "İdeya 2"],
+      "hashtags": ["#hashtag1", "#hashtag2"]
+    }}
+  ],
+  "trending_topics": [
+    {{
+      "topic": "Mövzu",
+      "popularity": 90,
+      "audience_fit": "Hədəf auditoriyaya uyğunluq",
+      "content_angle": "Bu mövzunu necə istifadə etmək"
+    }}
+  ],
+  "content_recommendations": [
+    {{
+      "type": "Content növü (video, carousel, reel, etc)",
+      "theme": "Tema",
+      "description": "Təsvir",
+      "estimated_engagement": "Yüksək/Orta/Aşağı",
+      "best_platforms": ["Instagram", "Facebook"]
+    }}
+  ],
+  "hashtag_trends": [
+    {{
+      "hashtag": "#hashtag",
+      "trend_status": "Yüksəlir/Populyar/Sabit",
+      "estimated_reach": "Təxmini reach",
+      "usage_tip": "İstifadə tövsiyəsi"
+    }}
+  ],
+  "competitor_insights": [
+    {{
+      "strategy": "Strategiya",
+      "why_it_works": "Niyə işə yarayır",
+      "how_to_apply": "Necə tətbiq etmək"
+    }}
+  ],
+  "upcoming_events": [
+    {{
+      "event": "Event/Bayram",
+      "date": "Tarix",
+      "preparation_timeline": "Hazırlıq müddəti",
+      "content_ideas": ["İdeya 1", "İdeya 2"]
+    }}
+  ],
+  "summary": {{
+    "overall_trend_direction": "Ümumi trend istiqaməti",
+    "key_opportunities": ["Əsas imkan 1", "Əsas imkan 2"],
+    "quick_wins": ["Tez qazanc 1", "Tez qazanc 2"],
+    "long_term_strategy": "Uzunmüddətli strategiya"
+  }}
+}}
+
+Tələblər:
+- Azərbaycan dilinə real və aktual trendlər
+- {industry} sənayesi üçün spesifik
+- {region} regionuna uyğun
+- Hazırkı ay və mövsümə uyğun
+- Praktik və tətbiq oluna bilən tövsiyələr
+- 5-8 trend, 3-5 seasonal opportunity, 5-7 trending topic
+- Yalnız JSON qaytar, başqa mətn yazma"""
+            
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Sən peşəkar sosial media və marketinq trend analitikisən. Həmişə JSON formatında cavab verirsən."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=4000,
+                temperature=0.7,
+                response_format={"type": "json_object"}
+            )
+            
+            # Parse JSON response
+            trends_data = json.loads(response.choices[0].message.content.strip())
+            
+            logger.info(f"✅ Successfully analyzed trends for {industry}")
+            logger.info(f"   Current Trends: {len(trends_data.get('current_trends', []))}")
+            logger.info(f"   Seasonal Opportunities: {len(trends_data.get('seasonal_opportunities', []))}")
+            logger.info(f"   Trending Topics: {len(trends_data.get('trending_topics', []))}")
+            
+            return Response({
+                'trends': trends_data,
+                'analysis_date': current_date.isoformat(),
+                'status': 'success'
+            }, status=status.HTTP_200_OK)
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error: {str(e)}")
+            return Response({
+                'error': 'Failed to parse trend analysis response'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except ValueError as e:
+            logger.error(f"Validation error: {str(e)}")
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except openai.APIError as e:
+            logger.error(f"OpenAI API error: {str(e)}")
+            return Response({
+                'error': f'OpenAI API error: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            logger.error(f"Error analyzing trends: {str(e)}", exc_info=True)
+            return Response({
+                'error': f'Failed to analyze trends: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class OptimizeCaptionView(APIView):
+    """Optimize captions/titles for better engagement"""
+    
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        try:
+            caption = request.data.get('caption', '')
+            content_type = request.data.get('content_type', 'post')  # post, title, description
+            platform = request.data.get('platform', 'general')  # instagram, facebook, linkedin, general
+            company_name = request.data.get('company_name', '')
+            industry = request.data.get('industry', '')
+            target_audience = request.data.get('target_audience', '')
+            tone = request.data.get('tone', 'professional')  # professional, casual, creative, friendly
+            
+            if not caption:
+                return Response({
+                    'error': 'Caption is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            logger.info(f"Optimizing caption for user: {request.user.email}")
+            logger.info(f"Content type: {content_type}, Platform: {platform}, Tone: {tone}")
+            
+            # Initialize OpenAI client
+            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+            
+            # Build context
+            context_info = ""
+            if company_name:
+                context_info += f"Şirkət: {company_name}\n"
+            if industry:
+                context_info += f"Sənaye: {industry}\n"
+            if target_audience:
+                context_info += f"Hədəf Auditoriya: {target_audience}\n"
+            
+            # Platform-specific guidelines
+            platform_guidelines = {
+                'instagram': 'Instagram üçün: Qısa, cəlbedici, emoji istifadə et, call-to-action əlavə et',
+                'facebook': 'Facebook üçün: Daha uzun, məlumatlı, sual ver, müzakirə yarad',
+                'linkedin': 'LinkedIn üçün: Professional, dəyər əlavə edən, biznes fokuslu',
+                'general': 'Ümumi: Cəlbedici, aydın, hədəf auditoriyaya uyğun'
+            }
+            
+            # Tone guidelines
+            tone_guidelines = {
+                'professional': 'Professional və formal ton',
+                'casual': 'Dostcasına və səmimi ton',
+                'creative': 'Yaradıcı və orijinal ton',
+                'friendly': 'Dostlu və açıq ton'
+            }
+            
+            # Create prompt
+            prompt = f"""Sən peşəkar sosial media marketinq ekspertisən. Aşağıdakı başlıq/caption-ı optimallaşdır.
+
+{context_info}
+
+Orijinal {content_type}: {caption}
+
+Platform: {platform_guidelines.get(platform, platform_guidelines['general'])}
+Ton: {tone_guidelines.get(tone, 'professional')}
+
+Tələblər:
+- Daha cəlbedici və engagement yaradan
+- Aydın və anlaşılan
+- Hədəf auditoriyaya uyğun
+- Platform xüsusiyyətlərinə uyğun
+- Ton-a uyğun
+- Orijinal məzmunu saxla, amma daha effektiv et
+- Yalnız optimallaşdırılmış başlıq/caption qaytar, başqa heç nə yazma"""
+            
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Sən peşəkar sosial media marketinq ekspertisən. Başlıq və caption-ları optimallaşdırırsan."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=500,
+                temperature=0.8
+            )
+            
+            optimized_caption = response.choices[0].message.content.strip()
+            optimized_caption = optimized_caption.strip('"\'')
+            
+            logger.info(f"Successfully optimized caption: {len(optimized_caption)} chars")
+            
+            return Response({
+                'original_caption': caption,
+                'optimized_caption': optimized_caption,
+                'improvements': {
+                    'length_change': len(optimized_caption) - len(caption),
+                    'platform': platform,
+                    'tone': tone
+                },
+                'status': 'success'
+            }, status=status.HTTP_200_OK)
+            
+        except ValueError as e:
+            logger.error(f"Validation error: {str(e)}")
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except openai.APIError as e:
+            logger.error(f"OpenAI API error: {str(e)}")
+            return Response({
+                'error': f'OpenAI API error: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            logger.error(f"Error optimizing caption: {str(e)}", exc_info=True)
+            return Response({
+                'error': f'Failed to optimize caption: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class GenerateHashtagsView(APIView):
+    """Generate hashtags based on company information and content"""
+    
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        try:
+            # Get company information
+            company_name = request.data.get('company_name', '')
+            industry = request.data.get('industry', '')
+            business_description = request.data.get('business_description', '')
+            content = request.data.get('content', '')
+            target_audience = request.data.get('target_audience', '')
+            brand_keywords = request.data.get('brand_keywords', [])
+            num_hashtags = request.data.get('num_hashtags', 15)
+            
+            if not company_name and not content:
+                return Response({
+                    'error': 'Company name or content is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            logger.info(f"Generating hashtags for user: {request.user.email}")
+            logger.info(f"Company: {company_name}, Industry: {industry}")
+            
+            # Initialize OpenAI client
+            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+            
+            # Build context
+            context_info = ""
+            if company_name:
+                context_info += f"Şirkət Adı: {company_name}\n"
+            if industry:
+                context_info += f"Sənaye: {industry}\n"
+            if business_description:
+                context_info += f"Biznes Təsviri: {business_description}\n"
+            if target_audience:
+                context_info += f"Hədəf Auditoriya: {target_audience}\n"
+            if brand_keywords:
+                keywords_str = ', '.join(brand_keywords) if isinstance(brand_keywords, list) else brand_keywords
+                context_info += f"Brend Açar Sözləri: {keywords_str}\n"
+            if content:
+                context_info += f"Paylaşım Məzmunu: {content[:500]}\n"
+            
+            # Create prompt for hashtag generation
+            prompt = f"""Sən peşəkar sosial media marketinq ekspertisən. Aşağıdakı məlumatlara əsasən {num_hashtags} ədəd uyğun hashtag yarat.
+
+{context_info}
+
+Tələblər:
+- {num_hashtags} ədəd hashtag (az və ya çox deyil)
+- Populyar və trend hashtaglar
+- Niş (niche) hashtaglar
+- Yerli hashtaglar (#baku, #azerbaijan və s.)
+- Sənaye xüsusi hashtaglar
+- Brend hashtaglar (şirkət adı əsasında)
+- Mix: populyar (yüksək trafik) və niş (az rəqabət) hashtaglar
+- Yalnız hashtagları qaytar, başqa heç nə yazma
+- Hashtaglar # işarəsi ilə başlamalıdır
+- JSON array formatında qaytar: ["#hashtag1", "#hashtag2", ...]"""
+            
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=500,
+                temperature=0.8
+            )
+            
+            response_text = response.choices[0].message.content.strip()
+            
+            # Remove markdown code blocks if present
+            if '```' in response_text:
+                parts = response_text.split('```')
+                if len(parts) >= 3:
+                    response_text = parts[1]
+                    if response_text.lower().startswith('json'):
+                        response_text = response_text[4:]
+                elif len(parts) == 2:
+                    response_text = parts[1]
+            
+            response_text = response_text.strip()
+            
+            # Parse JSON
+            try:
+                hashtags = json.loads(response_text)
+                if not isinstance(hashtags, list):
+                    raise ValueError("Response must be an array")
+                
+                # Validate and clean hashtags
+                cleaned_hashtags = []
+                for tag in hashtags:
+                    tag_str = str(tag).strip()
+                    if not tag_str.startswith('#'):
+                        tag_str = '#' + tag_str.lstrip('#')
+                    # Remove duplicates
+                    if tag_str not in cleaned_hashtags:
+                        cleaned_hashtags.append(tag_str)
+                
+                # Limit to requested number
+                hashtags = cleaned_hashtags[:num_hashtags]
+                
+                logger.info(f"Successfully generated {len(hashtags)} hashtags")
+                
+                return Response({
+                    'hashtags': hashtags,
+                    'count': len(hashtags),
+                    'status': 'success'
+                }, status=status.HTTP_200_OK)
+                
+            except json.JSONDecodeError as e:
+                # Try to extract hashtags manually
+                import re
+                hashtag_pattern = r'#\w+'
+                found_hashtags = re.findall(hashtag_pattern, response_text)
+                if found_hashtags:
+                    hashtags = list(set(found_hashtags))[:num_hashtags]
+                    return Response({
+                        'hashtags': hashtags,
+                        'count': len(hashtags),
+                        'status': 'success'
+                    }, status=status.HTTP_200_OK)
+                else:
+                    raise ValueError(f"Failed to parse hashtags: {str(e)}")
+            
+        except ValueError as e:
+            logger.error(f"Validation error: {str(e)}")
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except openai.APIError as e:
+            logger.error(f"OpenAI API error: {str(e)}")
+            return Response({
+                'error': f'OpenAI API error: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            logger.error(f"Error generating hashtags: {str(e)}", exc_info=True)
+            return Response({
+                'error': f'Failed to generate hashtags: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class GenerateSloganView(APIView):
+    """Generate slogan based on company information"""
+    
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        try:
+            # Get company information
+            company_name = request.data.get('company_name', '')
+            industry = request.data.get('industry', '')
+            business_description = request.data.get('business_description', '')
+            target_audience = request.data.get('target_audience', '')
+            unique_selling_points = request.data.get('unique_selling_points', '')
+            brand_personality = request.data.get('brand_personality', [])
+            brand_keywords = request.data.get('brand_keywords', [])
+            
+            if not company_name:
+                return Response({
+                    'error': 'Company name is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            logger.info(f"Generating slogan for user: {request.user.email}")
+            logger.info(f"Company: {company_name}")
+            
+            # Initialize OpenAI client
+            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+            
+            # Build context
+            context_info = f"Şirkət Adı: {company_name}\n"
+            if industry:
+                context_info += f"Sənaye: {industry}\n"
+            if business_description:
+                context_info += f"Biznes Təsviri: {business_description}\n"
+            if target_audience:
+                context_info += f"Hədəf Auditoriya: {target_audience}\n"
+            if unique_selling_points:
+                context_info += f"Unikal Satış Təklifləri: {unique_selling_points}\n"
+            if brand_personality:
+                context_info += f"Brend Şəxsiyyəti: {', '.join(brand_personality) if isinstance(brand_personality, list) else brand_personality}\n"
+            if brand_keywords:
+                context_info += f"Brend Açar Sözləri: {', '.join(brand_keywords) if isinstance(brand_keywords, list) else brand_keywords}\n"
+            
+            # Create prompt for slogan generation
+            prompt = f"""Sən peşəkar brending ekspertisən. Aşağıdakı şirkət məlumatlarına əsasən güclü, yadda qalan slogan yarat.
+
+{context_info}
+
+Tələblər:
+- Qısa və yadda qalan (3-7 söz, maksimum 200 simvol)
+- Professional və ilhamverici
+- Azərbaycan dilində
+- Brendin mahiyyətini və dəyərlərini əks etdirən
+- Şirkətin unikal xüsusiyyətlərini vurğulayan
+- Hədəf auditoriyaya cəlbedici
+
+YALNIZ sloganı qaytar, başqa heç nə yazma. Slogan dırnaqsız olmalıdır."""
+            
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                max_tokens=100,
+                temperature=0.9
+            )
+            
+            slogan_raw = response.choices[0].message.content.strip()
+            # Remove quotes if present
+            slogan = slogan_raw.strip('"').strip("'").strip()
+            
+            # Validate slogan
+            if not slogan or len(slogan) < 3:
+                logger.warning(f"Slogan çox qısadır: '{slogan}'. Default slogan istifadə olunur.")
+                slogan = f"{company_name} - Sizin Uğurunuz, Bizim Məqsədimiz"
+            
+            # Limit length
+            if len(slogan) > 200:
+                slogan = slogan[:197] + "..."
+            
+            logger.info(f"Successfully generated slogan: '{slogan}'")
+            
+            return Response({
+                'slogan': slogan,
+                'status': 'success'
+            }, status=status.HTTP_200_OK)
+            
+        except ValueError as e:
+            logger.error(f"Validation error: {str(e)}")
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except openai.APIError as e:
+            logger.error(f"OpenAI API error: {str(e)}")
+            return Response({
+                'error': f'OpenAI API error: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            logger.error(f"Error generating slogan: {str(e)}", exc_info=True)
+            return Response({
+                'error': f'Failed to generate slogan: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 # ============================================================================
 # WASK.CO AI LOGO & SLOGAN GENERATOR
 # ============================================================================

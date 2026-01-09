@@ -5,6 +5,13 @@ urlpatterns = [
     path('generate-content/', views.GenerateContentView.as_view(), name='generate_content'),
     path('optimize-platform/', views.OptimizeForPlatformView.as_view(), name='optimize_platform'),
     path('analyze-logo/', views.AnalyzeLogoView.as_view(), name='analyze_logo'),
+    path('generate-complementary-colors/', views.GenerateComplementaryColorsView.as_view(), name='generate_complementary_colors'),
+    path('generate-slogan/', views.GenerateSloganView.as_view(), name='generate_slogan'),
+    path('generate-hashtags/', views.GenerateHashtagsView.as_view(), name='generate_hashtags'),
+    path('optimize-caption/', views.OptimizeCaptionView.as_view(), name='optimize_caption'),
+    path('analyze-trends/', views.AnalyzeTrendsView.as_view(), name='analyze_trends'),
+    path('competitor-analysis/', views.CompetitorAnalysisView.as_view(), name='competitor_analysis'),
+    path('generate-smart-prompt/', views.GenerateSmartPromptView.as_view(), name='generate_smart_prompt'),
     path('wask/generate-logo-slogan/', views.generate_logo_slogan, name='wask_generate_logo_slogan'),
     path('create-ad-creative/', views.create_ad_creative, name='create_ad_creative'),
     # Fal.ai endpoints

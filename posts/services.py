@@ -263,8 +263,15 @@ HƏR POST ÜÇÜN DIZAYN SPESIFIKASIYALARI DA ƏLAVƏ ET:
         try:
             logger.info(f"🔄 Sending request to OpenAI (model: gpt-4o-mini) for {num_posts} posts")
             # Increase timeout and max_tokens for larger post counts
-            timeout_duration = max(120, num_posts * 15)  # At least 15 seconds per post
-            max_tokens_value = max(4000, num_posts * 500)  # At least 500 tokens per post
+            # For 10+ posts, use more generous timeouts
+            if num_posts >= 10:
+                timeout_duration = max(300, num_posts * 30)  # At least 30 seconds per post for 10+
+                max_tokens_value = max(8000, num_posts * 600)  # At least 600 tokens per post for 10+
+            else:
+                timeout_duration = max(120, num_posts * 15)  # At least 15 seconds per post
+                max_tokens_value = max(4000, num_posts * 500)  # At least 500 tokens per post
+            
+            logger.info(f"⏱️  Timeout set to {timeout_duration}s, max_tokens={max_tokens_value}")
             
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",  # Using faster, cheaper model
@@ -577,9 +584,21 @@ class PostGenerationService:
         logger.info(f"🎨 Ideogram API status: {'Configured ✅' if ideogram_configured else 'Not configured ❌'}")
         
         # Generate Ideogram designs for each post using AI-generated design specs
+        # For 10+ posts, skip image generation to avoid timeout - images can be generated later
+        skip_images = len(posts) >= 10
+        if skip_images:
+            logger.info(f"⚠️  Skipping image generation for {len(posts)} posts to avoid timeout. Images can be generated later.")
+        
         for idx, post in enumerate(posts, 1):
             try:
                 logger.debug(f"🖼️  Processing design for post {idx}/{len(posts)} (ID: {post.id})")
+                
+                # Skip image generation for large batches
+                if skip_images:
+                    logger.info(f"⏭️  Skipping image generation for post {idx}/{len(posts)}")
+                    post.design_thumbnail = 'https://via.placeholder.com/800x800/3b82f6/ffffff?text=Image+Will+Be+Generated+Later'
+                    post.save()
+                    continue
                 
                 # Use AI-generated background prompt if available
                 custom_prompt = None
