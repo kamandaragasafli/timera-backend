@@ -34,7 +34,8 @@ class PostListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
-        return Post.objects.filter(user=self.request.user)
+        # Exclude rejected/cancelled posts from the posts list
+        return Post.objects.filter(user=self.request.user).exclude(status='cancelled')
     
     def create(self, request, *args, **kwargs):
         """Override create method to add extensive logging"""
@@ -862,11 +863,37 @@ class GeneratePostsView(APIView):
         try:
             logger.info(f"Starting post generation for user: {request.user.email}")
             
+            # Rate limiting: Check for recent generations (abuse prevention)
+            from django.utils import timezone
+            from datetime import timedelta
+            from .models import AIGeneratedContent
+            
+            # Check if user has generated posts in the last 5 minutes
+            recent_generations = AIGeneratedContent.objects.filter(
+                user=request.user,
+                created_at__gte=timezone.now() - timedelta(minutes=5)
+            ).count()
+            
+            if recent_generations > 0:
+                logger.warning(f"Rate limit: User {request.user.email} attempted generation too soon")
+                return Response({
+                    'error': 'Please wait a few minutes before generating more posts'
+                }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            
             # Get custom prompt if provided
             custom_prompt = serializer.validated_data.get('custom_prompt', '')
             
             service = PostGenerationService(user=request.user)
             ai_batch, posts = service.generate_monthly_content(request.user, custom_prompt=custom_prompt)
+            
+            # Validate post count (limit to 10 posts per generation)
+            if len(posts) > 10:
+                logger.warning(f"Post limit exceeded: {len(posts)} posts generated, limiting to 10")
+                # Keep only first 10 posts
+                posts = posts[:10]
+                # Update batch total
+                ai_batch.total_posts = 10
+                ai_batch.save()
             
             logger.info(f"Successfully generated {len(posts)} posts for user: {request.user.email}")
             
@@ -956,39 +983,69 @@ class UploadCustomImageView(APIView):
         return response
     
     def post(self, request, post_id):
+        import logging
+        logger = logging.getLogger(__name__)
+        
         try:
+            logger.info(f'📤 Image upload request received for post: {post_id}, user: {request.user.email}')
+            
             post = get_object_or_404(Post, id=post_id, user=request.user)
+            logger.info(f'✅ Post found: {post.id}, title: {post.title}')
             
             if 'image' not in request.FILES:
+                logger.error('❌ No image file in request.FILES')
                 return Response({
                     'error': 'No image file provided'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             image_file = request.FILES['image']
+            logger.info(f'📁 Image file received: {image_file.name}, size: {image_file.size} bytes, type: {image_file.content_type}')
             
             # Validate image file (increased to 10MB to match server limits)
             if image_file.size > 10 * 1024 * 1024:  # 10MB limit
+                logger.error(f'❌ Image file too large: {image_file.size / 1024 / 1024:.2f}MB')
                 return Response({
                     'error': f'Image file too large ({image_file.size / 1024 / 1024:.2f}MB). Maximum size is 10MB.'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
+            logger.info('🔄 Calling PostGenerationService.upload_custom_image...')
             service = PostGenerationService()
             updated_post = service.upload_custom_image(post_id, request.user, image_file)
+            logger.info(f'✅ Image uploaded successfully, post ID: {updated_post.id}')
+            
+            # Serialize the updated post
+            serializer = PostSerializer(updated_post, context={'request': request})
+            post_data = serializer.data
+            logger.info(f'📊 Serialized post data keys: {list(post_data.keys())}')
+            logger.info(f'📊 Post has custom_image_url: {bool(post_data.get("custom_image_url"))}')
+            if post_data.get('custom_image_url'):
+                logger.info(f'📊 custom_image_url: {post_data.get("custom_image_url")}')
             
             response_data = Response({
                 'message': 'Image uploaded successfully',
-                'post': PostSerializer(updated_post, context={'request': request}).data
+                'post': post_data
             }, status=status.HTTP_200_OK)
             
             # Add CORS headers explicitly
             response_data['Access-Control-Allow-Origin'] = request.META.get('HTTP_ORIGIN', '*')
+            response_data['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+            response_data['Access-Control-Allow-Headers'] = 'Authorization, Content-Type'
             response_data['Access-Control-Allow-Credentials'] = 'true'
             
+            logger.info('✅ Response sent successfully')
             return response_data
             
-        except Exception as e:
+        except Post.DoesNotExist:
+            logger.error(f'❌ Post not found: {post_id}')
             return Response({
-                'error': 'Failed to upload image'
+                'error': 'Post not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            import traceback
+            logger.error(f'❌ Error uploading image: {str(e)}')
+            logger.error(traceback.format_exc())
+            return Response({
+                'error': f'Failed to upload image: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 

@@ -58,10 +58,35 @@ class OpenAIService:
         )
         
         try:
-            # Generate posts using ChatGPT
-            logger.info(f"🤖 Calling OpenAI API for {num_posts} posts...")
-            posts_data = self._generate_posts_with_chatgpt(company_profile, num_posts, custom_prompt)
-            logger.info(f"✅ OpenAI returned {len(posts_data)} posts")
+            # For 15+ posts, use batch generation to avoid timeout
+            if num_posts >= 15:
+                logger.info(f"📦 Large batch detected ({num_posts} posts). Using batch generation strategy...")
+                posts_data = self._generate_posts_in_batches(company_profile, num_posts, custom_prompt)
+            else:
+                # Generate posts using ChatGPT (single request)
+                logger.info(f"🤖 Calling OpenAI API for {num_posts} posts...")
+                posts_data = self._generate_posts_with_chatgpt(company_profile, num_posts, custom_prompt)
+                logger.info(f"✅ OpenAI returned {len(posts_data)} posts")
+            
+            # Check if we got fewer posts than requested
+            if len(posts_data) < num_posts:
+                missing_count = num_posts - len(posts_data)
+                logger.warning(f"⚠️ OpenAI returned only {len(posts_data)} posts, but {num_posts} were requested. Generating {missing_count} additional posts...")
+                
+                # Generate additional posts to reach the requested count
+                additional_posts = self._generate_additional_posts(
+                    company_profile, 
+                    missing_count, 
+                    existing_posts=posts_data,
+                    custom_prompt=custom_prompt
+                )
+                posts_data.extend(additional_posts)
+                logger.info(f"✅ Added {len(additional_posts)} additional posts. Total: {len(posts_data)} posts")
+            
+            # Ensure we don't exceed the requested count (in case OpenAI returned more)
+            if len(posts_data) > num_posts:
+                logger.warning(f"⚠️ OpenAI returned {len(posts_data)} posts, but only {num_posts} were requested. Truncating to {num_posts} posts.")
+                posts_data = posts_data[:num_posts]
             
             # Create Post objects
             created_posts = []
@@ -160,7 +185,9 @@ BREND MƏLUMATLARI (Loqodan Əldə Edilib):
         location_info = f" ({company_profile.location})" if company_profile.location else ""
         
         prompt = f"""
-Sən peşəkar sosial media məzmun yaradıcısısan. Aşağıdakı ŞİRKƏT HAQQINDA BÜTÜN MƏLUMATLARI DİQQƏTLƏ OXUYUB, şirkətin brend identifikasiyasına, rənglərinə, stilinə və səsləşməsinə uyğun {num_posts} ədəd sosial media postu yarat.
+Sən peşəkar sosial media məzmun yaradıcısısan. Aşağıdakı ŞİRKƏT HAQQINDA BÜTÜN MƏLUMATLARI DİQQƏTLƏ OXUYUB, şirkətin brend identifikasiyasına, rənglərinə, stilinə və səsləşməsinə uyğun DƏQİQ {num_posts} ədəd sosial media postu yarat.
+
+⚠️ VACİB: JSON array-də DƏQİQ {num_posts} ədəd post olmalıdır. Nə az, nə də çox! Əgər {num_posts} post yarada bilmirsənsə, yenidən cəhd et.
 {custom_instructions}
 ═══════════════════════════════════════════════════════════════
 ŞİRKƏT ƏSAS MƏLUMATLARI:
@@ -222,7 +249,8 @@ VACİB TƏLİMATLAR:
 12. 📊 Hər postda dəyər təqdim et (məlumat, həll yolu, ilham, məsləhət)
 
 JSON formatında cavab ver (markdown yox, təmiz JSON).
-HƏR POST ÜÇÜN DIZAYN SPESIFIKASIYALARI DA ƏLAVƏ ET:
+⚠️ VACİB: JSON array-də DƏQİQ {num_posts} ədəd post olmalıdır. Hər post üçün DIZAYN SPESIFIKASIYALARI DA ƏLAVƏ ET:
+
 [
   {{
     "title": "Cəlbedici post başlığı",
@@ -243,7 +271,8 @@ HƏR POST ÜÇÜN DIZAYN SPESIFIKASIYALARI DA ƏLAVƏ ET:
       "overlay_opacity": 0.3,
       "mood": "energetic/calm/professional/playful"
     }}
-  }}
+  }},
+  ... (DƏQİQ {num_posts} ədəd post yarat)
 ]
 
 🎨 DIZAYN QAYDALARI:
@@ -254,17 +283,100 @@ HƏR POST ÜÇÜN DIZAYN SPESIFIKASIYALARI DA ƏLAVƏ ET:
 """
         return prompt
     
-    def _generate_posts_with_chatgpt(self, company_profile, num_posts=5, custom_prompt=''):
+    def _generate_posts_in_batches(self, company_profile, num_posts, custom_prompt=''):
+        """Generate posts in batches for large counts (15+ posts)"""
+        
+        logger.info(f"🔄 Starting batch generation for {num_posts} posts...")
+        
+        # Determine batch size (10 posts per batch is optimal)
+        batch_size = 10
+        num_batches = (num_posts + batch_size - 1) // batch_size  # Ceiling division
+        
+        all_posts = []
+        
+        for batch_num in range(num_batches):
+            # Calculate how many posts to generate in this batch
+            remaining_posts = num_posts - len(all_posts)
+            current_batch_size = min(batch_size, remaining_posts)
+            
+            logger.info(f"📦 Batch {batch_num + 1}/{num_batches}: Generating {current_batch_size} posts...")
+            
+            try:
+                # Generate posts for this batch
+                batch_posts = self._generate_posts_with_chatgpt(
+                    company_profile, 
+                    current_batch_size, 
+                    custom_prompt,
+                    existing_posts=all_posts  # Pass existing posts to avoid duplicates
+                )
+                
+                all_posts.extend(batch_posts)
+                logger.info(f"✅ Batch {batch_num + 1} completed: {len(batch_posts)} posts generated. Total: {len(all_posts)}/{num_posts}")
+                
+                # Small delay between batches to avoid rate limiting
+                if batch_num < num_batches - 1:
+                    import time
+                    time.sleep(1)
+                    
+            except ValueError as ve:
+                # If it's a timeout error, try with smaller batch
+                if "timeout" in str(ve).lower():
+                    logger.warning(f"⚠️ Batch {batch_num + 1} timed out. Trying with smaller batch size (5 posts)...")
+                    try:
+                        # Try with smaller batch (5 posts)
+                        smaller_batch_posts = self._generate_posts_with_chatgpt(
+                            company_profile, 
+                            5, 
+                            custom_prompt,
+                            existing_posts=all_posts
+                        )
+                        all_posts.extend(smaller_batch_posts)
+                        logger.info(f"✅ Smaller batch completed: {len(smaller_batch_posts)} posts. Total: {len(all_posts)}/{num_posts}")
+                    except Exception as e2:
+                        logger.error(f"❌ Smaller batch also failed: {str(e2)}")
+                        # Continue with next batch
+                        continue
+                else:
+                    logger.error(f"❌ Batch {batch_num + 1} failed: {str(ve)}")
+                    # Continue with next batch even if one fails
+                    continue
+            except Exception as e:
+                logger.error(f"❌ Batch {batch_num + 1} failed: {str(e)}")
+                # Continue with next batch even if one fails
+                continue
+        
+        logger.info(f"✅ Batch generation complete: {len(all_posts)}/{num_posts} posts generated")
+        return all_posts
+    
+    def _generate_posts_with_chatgpt(self, company_profile, num_posts=5, custom_prompt='', existing_posts=None):
         """Generate posts using ChatGPT API"""
         
         logger.debug(f"📋 Building prompt for company: {company_profile.company_name}")
+        
+        # If existing posts provided, mention them in prompt to avoid duplicates
+        existing_context = ""
+        if existing_posts and len(existing_posts) > 0:
+            existing_titles = [p.get('title', '') for p in existing_posts[:5]]
+            existing_context = f"\n\n⚠️ VACİB: Artıq yaradılmış postlar var. Bu postlardan FƏRQLİ olmalısan:\n" + "\n".join([f"- {title}" for title in existing_titles])
+        
         prompt = self._build_generation_prompt(company_profile, num_posts, custom_prompt)
+        
+        # Add existing posts context if provided
+        if existing_context:
+            # Insert existing context after the main instruction
+            prompt = prompt.replace(
+                "⚠️ VACİB: JSON array-də DƏQİQ",
+                f"⚠️ VACİB: JSON array-də DƏQİQ{existing_context}\n\n⚠️ VACİB: JSON array-də DƏQİQ"
+            )
         
         try:
             logger.info(f"🔄 Sending request to OpenAI (model: gpt-4o-mini) for {num_posts} posts")
             # Increase timeout and max_tokens for larger post counts
-            # For 10+ posts, use more generous timeouts
-            if num_posts >= 10:
+            # For 20+ posts, use even more generous timeouts
+            if num_posts >= 20:
+                timeout_duration = max(600, num_posts * 40)  # At least 40 seconds per post for 20+
+                max_tokens_value = max(16000, num_posts * 700)  # At least 700 tokens per post for 20+
+            elif num_posts >= 10:
                 timeout_duration = max(300, num_posts * 30)  # At least 30 seconds per post for 10+
                 max_tokens_value = max(8000, num_posts * 600)  # At least 600 tokens per post for 10+
             else:
@@ -313,14 +425,126 @@ HƏR POST ÜÇÜN DIZAYN SPESIFIKASIYALARI DA ƏLAVƏ ET:
                 
         except openai.APITimeoutError as e:
             logger.error(f"❌ OpenAI API Timeout Error: {str(e)}")
-            logger.error(f"   This might be due to generating too many posts ({num_posts}). Try generating fewer posts at once.")
-            raise ValueError(f"OpenAI API timeout. Generating {num_posts} posts took too long. Please try generating fewer posts (5-7) at once or try again later.")
+            if num_posts >= 20:
+                logger.error(f"   Large batch ({num_posts} posts) timed out. System will retry with batch generation.")
+                raise ValueError(f"OpenAI API timeout. Generating {num_posts} posts took too long. The system will automatically retry with batch generation. Please wait...")
+            else:
+                logger.error(f"   This might be due to generating too many posts ({num_posts}). Try generating fewer posts at once.")
+                raise ValueError(f"OpenAI API timeout. Generating {num_posts} posts took too long. Please try generating fewer posts (5-7) at once or try again later.")
         except openai.APIError as e:
             logger.error(f"❌ OpenAI API Error: {str(e)}", exc_info=True)
             raise ValueError(f"OpenAI API error: {str(e)}. Please check your API key and try again.")
         except Exception as e:
             logger.error(f"❌ Unexpected error in OpenAI API call: {str(e)}", exc_info=True)
             raise ValueError(f"Failed to generate posts: {str(e)}")
+    
+    def _generate_additional_posts(self, company_profile, missing_count, existing_posts=None, custom_prompt=''):
+        """Generate additional posts if OpenAI didn't return enough"""
+        
+        logger.info(f"🔄 Generating {missing_count} additional posts to reach target count...")
+        
+        # Build a focused prompt for additional posts
+        existing_titles = [p.get('title', '') for p in (existing_posts or [])]
+        existing_types = [p.get('post_type', '') for p in (existing_posts or [])]
+        
+        # Determine which post types we need more of
+        post_types = ["announcement", "educational", "promotional", "engagement", "company_culture", "tips"]
+        used_types = [t for t in existing_types if t in post_types]
+        needed_types = [t for t in post_types if t not in used_types] or post_types
+        
+        additional_prompt = f"""
+Sən peşəkar sosial media məzmun yaradıcısısan. Aşağıdakı şirkət haqqında {missing_count} ədəd ƏLAVƏ sosial media postu yarat.
+
+⚠️ VACİB: Bu postlar ƏVVƏL yaradılmış postlardan FƏRQLİ olmalıdır. Mövcud postların başlıqları:
+{', '.join(existing_titles[:5]) if existing_titles else 'Yoxdur'}
+
+ŞİRKƏT MƏLUMATLARI:
+🏢 Şirkət: {company_profile.company_name}
+🏭 Sənaye: {company_profile.get_industry_display()}
+📝 Biznes: {company_profile.business_description[:200]}...
+🎯 Auditoriya: {company_profile.target_audience[:200]}...
+✨ Üstünlüklər: {company_profile.unique_selling_points[:200]}...
+
+TƏLİMATLAR:
+1. Mövcud postlardan FƏRQLİ başlıq və məzmun yarat
+2. Azərbaycan dilində (latın əlifbası)
+3. 150-300 söz
+4. 3-5 hashtag
+5. Müxtəlif post növləri: {', '.join(needed_types[:missing_count])}
+6. Emojilər istifadə et
+
+JSON formatında cavab ver:
+[
+  {{
+    "title": "Başlıq",
+    "content": "Məzmun",
+    "description": "Təsvir",
+    "hashtags": ["#tag1", "#tag2"],
+    "post_type": "announcement/educational/promotional/engagement/company_culture/tips",
+    "design_specs": {{
+      "background_prompt": "image prompt in English",
+      "layout_style": "professional",
+      "primary_color": "#3B82F6",
+      "accent_color": "#10B981",
+      "title_position": "center",
+      "title_size": 72,
+      "content_position": "bottom",
+      "content_size": 36,
+      "overlay_color": "#000000",
+      "overlay_opacity": 0.3,
+      "mood": "professional"
+    }}
+  }}
+]
+"""
+        
+        try:
+            logger.info(f"🤖 Requesting {missing_count} additional posts from OpenAI...")
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Sən peşəkar Azərbaycan dilində sosial media məzmun yaradıcısısan. Həmişə JSON formatında cavab verirsən."
+                    },
+                    {"role": "user", "content": additional_prompt}
+                ],
+                max_tokens=max(4000, missing_count * 500),
+                temperature=0.8,  # Slightly higher temperature for more variety
+                timeout=120
+            )
+            
+            content = response.choices[0].message.content.strip()
+            
+            # Strip markdown code blocks
+            if content.startswith('```json'):
+                content = content[7:]
+            if content.startswith('```'):
+                content = content[3:]
+            if content.endswith('```'):
+                content = content[:-3]
+            content = content.strip()
+            
+            # Parse JSON
+            additional_posts = json.loads(content)
+            logger.info(f"✅ Generated {len(additional_posts)} additional posts")
+            
+            # Ensure we return exactly the missing count
+            if len(additional_posts) > missing_count:
+                additional_posts = additional_posts[:missing_count]
+            elif len(additional_posts) < missing_count:
+                # If still not enough, create fallback posts
+                logger.warning(f"⚠️ Only got {len(additional_posts)} additional posts, creating {missing_count - len(additional_posts)} fallback posts")
+                fallback_posts = self._create_fallback_posts(company_profile)
+                additional_posts.extend(fallback_posts[:missing_count - len(additional_posts)])
+            
+            return additional_posts
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to generate additional posts: {str(e)}")
+            # Return fallback posts if generation fails
+            fallback_posts = self._create_fallback_posts(company_profile)
+            return fallback_posts[:missing_count]
     
     def _create_fallback_posts(self, company_profile):
         """Create fallback posts if AI generation fails"""
@@ -363,6 +587,66 @@ HƏR POST ÜÇÜN DIZAYN SPESIFIKASIYALARI DA ƏLAVƏ ET:
                     "content_size": 40,
                     "overlay_color": "#000000",
                     "overlay_opacity": 0.4,
+                    "mood": "energetic"
+                }
+            },
+            {
+                "title": "Müştəri Təcrübəsi və Dəyər",
+                "content": f"💎 {company_profile.company_name} olaraq, hər müştəri bizim üçün dəyərlidir.\n\n🎯 Bizim missiyamız:\n• Keyfiyyətli xidmət\n• Müştəri məmnuniyyəti\n• Davamlı inkişaf\n\n📞 Bizimlə əlaqə saxlayın və fərqi hiss edin!",
+                "description": "Müştəri məmnuniyyəti və dəyər",
+                "hashtags": ["#müştəri", "#keyfiyyət", "#dəyər"],
+                "post_type": "engagement",
+                "design_specs": {
+                    "background_prompt": "happy customers and professional service team interaction",
+                    "layout_style": "elegant",
+                    "primary_color": "#10B981",
+                    "accent_color": "#3B82F6",
+                    "title_position": "top",
+                    "title_size": 70,
+                    "content_position": "center",
+                    "content_size": 38,
+                    "overlay_color": "#000000",
+                    "overlay_opacity": 0.25,
+                    "mood": "calm"
+                }
+            },
+            {
+                "title": "Şirkət Mədəniyyəti və Komanda",
+                "content": f"👥 {company_profile.company_name} komandası olaraq, birgə işləməkdən qürur duyuruq.\n\n🌟 Bizim dəyərlərimiz:\n• Komanda ruhu\n• İnnovasiya\n• Davamlı təhsil\n• Müştəri fokusu\n\n💼 Bizimlə işləmək istəyirsiniz? Bizimlə əlaqə saxlayın!",
+                "description": "Şirkət mədəniyyəti və komanda",
+                "hashtags": ["#komanda", "#mədəniyyət", "#iş"],
+                "post_type": "company_culture",
+                "design_specs": {
+                    "background_prompt": "diverse team of professionals collaborating in modern workspace",
+                    "layout_style": "minimal",
+                    "primary_color": "#6366F1",
+                    "accent_color": "#EC4899",
+                    "title_position": "center",
+                    "title_size": 72,
+                    "content_position": "bottom",
+                    "content_size": 36,
+                    "overlay_color": "#000000",
+                    "overlay_opacity": 0.3,
+                    "mood": "professional"
+                }
+            },
+            {
+                "title": "Məsləhət və Fikirlər",
+                "content": f"💡 {company_profile.get_industry_display()} sahəsində uğur üçün məsləhətlər:\n\n✅ Daim yenilikləri izləyin\n✅ Müştəri geri bildirimlərini dinləyin\n✅ Komanda ilə birgə işləyin\n✅ Keyfiyyətə fokuslanın\n\n🎯 Bu prinsiplər {company_profile.company_name} üçün də vacibdir!",
+                "description": "Sənayə üzrə məsləhətlər",
+                "hashtags": ["#məsləhət", "#uğur", "#biznes"],
+                "post_type": "tips",
+                "design_specs": {
+                    "background_prompt": "lightbulb ideas and professional business tips concept",
+                    "layout_style": "creative",
+                    "primary_color": "#F59E0B",
+                    "accent_color": "#8B5CF6",
+                    "title_position": "top",
+                    "title_size": 68,
+                    "content_position": "center",
+                    "content_size": 40,
+                    "overlay_color": "#000000",
+                    "overlay_opacity": 0.35,
                     "mood": "energetic"
                 }
             }
@@ -445,7 +729,8 @@ class IdeogramService:
             }
             
             logger.info(f"📤 Sending request to NANO BANANA API...")
-            response = requests.post(fal_url, headers=headers, json=payload, timeout=90)
+            # Timeout set to 60 seconds - Fal.ai can be slow
+            response = requests.post(fal_url, headers=headers, json=payload, timeout=60)
             
             if response.status_code == 200:
                 result = response.json()
@@ -471,6 +756,9 @@ class IdeogramService:
             # Fallback if Nano Banana fails
             return self._create_fallback_design(post_content)
                 
+        except requests.Timeout:
+            logger.warning(f"⏱️  NANO BANANA API timeout (60s). Using fallback image.")
+            return self._create_fallback_design(post_content)
         except Exception as e:
             logger.error(f"❌ Error in NANO BANANA image generation: {e}", exc_info=True)
             return self._create_fallback_design(post_content)
@@ -584,14 +872,15 @@ class PostGenerationService:
         logger.info(f"🎨 Ideogram API status: {'Configured ✅' if ideogram_configured else 'Not configured ❌'}")
         
         # Generate Ideogram designs for each post using AI-generated design specs
-        # For 10+ posts, skip image generation to avoid timeout - images can be generated later
-        skip_images = len(posts) >= 10
+        # For 30+ posts, skip image generation to avoid timeout - images can be generated later
+        # Limit increased to allow image generation for batches up to 30 posts
+        skip_images = len(posts) >= 30
         if skip_images:
             logger.info(f"⚠️  Skipping image generation for {len(posts)} posts to avoid timeout. Images can be generated later.")
         
         for idx, post in enumerate(posts, 1):
             try:
-                logger.debug(f"🖼️  Processing design for post {idx}/{len(posts)} (ID: {post.id})")
+                logger.info(f"🖼️  Processing design for post {idx}/{len(posts)} (ID: {post.id})")
                 
                 # Skip image generation for large batches
                 if skip_images:
@@ -606,11 +895,13 @@ class PostGenerationService:
                     custom_prompt = post.design_specs['background_prompt']
                     logger.info(f"🎨 Using AI-generated prompt: {custom_prompt}")
                 
+                logger.info(f"🔄 Starting image generation for post {idx}/{len(posts)}...")
                 design_data = self.ideogram_service.create_design_for_post(
                     post.content, 
                     company_profile,
                     custom_prompt=custom_prompt
                 )
+                logger.info(f"✅ Image generation completed for post {idx}/{len(posts)}")
                 
                 # Always set at least the thumbnail (fallback or real)
                 post.canva_design_id = design_data.get('design_id', '')
@@ -635,7 +926,6 @@ class PostGenerationService:
                         
                         from .branding import ImageBrandingService
                         from django.core.files.base import ContentFile
-                        import os
                         
                         branding_service = ImageBrandingService(company_profile)
                         
@@ -701,8 +991,16 @@ class PostGenerationService:
         
         try:
             post = Post.objects.get(id=post_id, user=user)
+            
+            # Data retention policy: Check user preference or default to immediate deletion
+            # For now, we'll mark as cancelled and let a cleanup task handle deletion
+            # This allows for data retention policy configuration
             post.status = 'cancelled'
             post.save()
+            
+            # Note: Actual deletion should be handled by a scheduled task
+            # based on data retention policy (immediately or after X days)
+            
             return post
             
         except Post.DoesNotExist:

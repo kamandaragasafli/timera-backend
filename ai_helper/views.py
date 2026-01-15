@@ -2,7 +2,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes
 from django.conf import settings
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
@@ -1709,10 +1709,12 @@ def scrape_website_info(url):
         raise ValueError(f"Saytdan məlumat çıxarıla bilmədi: {str(e)}")
 
 
-def upload_product_image(image_file, user_id):
+def upload_product_image(image_file, user_id, folder_name="product_images"):
     """Məhsul şəklini yükləyir"""
+    # Reset file pointer to beginning
+    image_file.seek(0)
     ext = image_file.name.split('.')[-1].lower()
-    filename = f"logos/user_{user_id}_{uuid.uuid4()}.{ext}"
+    filename = f"{folder_name}/user_{user_id}_{uuid.uuid4()}.{ext}"
     path = default_storage.save(filename, ContentFile(image_file.read()))
     return default_storage.url(path)
 
@@ -2744,6 +2746,80 @@ def nano_banana_image_to_image(request):
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def upload_product_image_for_n8n(request):
+    """
+    Upload product image and return URL for n8n workflow
+    
+    POST /api/ai/upload-product-image/
+    
+    Body (multipart/form-data):
+    {
+        "image": File (required) - Product image file
+    }
+    
+    Returns:
+    {
+        "success": true,
+        "image_url": "https://...",
+        "message": "Image uploaded successfully"
+    }
+    """
+    user = request.user
+    
+    try:
+        # Get image file
+        image_file = request.FILES.get('image')
+        if not image_file:
+            return Response({
+                "error": "Şəkil faylı tələb olunur"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        logger.info(f"📤 Product image upload request from user: {user.email}")
+        logger.info(f"   File name: {image_file.name}")
+        logger.info(f"   File size: {image_file.size} bytes")
+        logger.info(f"   Content type: {image_file.content_type}")
+        
+        # Reset file pointer before reading
+        image_file.seek(0)
+        
+        # Upload image using existing function with product_images folder
+        image_url = upload_product_image(image_file, user.id, folder_name="product_images")
+        
+        # Make absolute URL if relative - MƏCBURİ
+        if not image_url.startswith('http://') and not image_url.startswith('https://'):
+            # Build absolute URL
+            base_url = request.build_absolute_uri('/').rstrip('/')
+            # Ensure image_url doesn't start with / if base_url already ends with /
+            if image_url.startswith('/'):
+                image_url = f"{base_url}{image_url}"
+            else:
+                image_url = f"{base_url}/{image_url}"
+        
+        # Final validation - URL-in düzgün olduğunu yoxla
+        if not image_url.startswith('http://') and not image_url.startswith('https://'):
+            logger.error(f"❌ URL hələ də absolute deyil: {image_url}")
+            raise ValueError(f"URL absolute formatda deyil: {image_url}")
+        
+        logger.info(f"✅ Product image uploaded: {image_url}")
+        logger.info(f"   URL format: {'Absolute' if image_url.startswith('http') else 'Relative'}")
+        logger.info(f"   URL length: {len(image_url)}")
+        
+        return Response({
+            "success": True,
+            "image_url": image_url,
+            "message": "Şəkil uğurla yükləndi"
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"❌ Error uploading product image: {str(e)}", exc_info=True)
+        return Response({
+            "error": f"Şəkil yüklənərkən xəta baş verdi: {str(e)}"
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
 def kling_video_text_to_video(request):
     """
     Generate video from text using Fal.ai Kling Video model
@@ -3659,10 +3735,15 @@ Effects: glowing aurora effects, abstract light streaks, gradient transitions, m
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+# TODO: Gələcəkdə aktivləşdiriləcək - URL-dən məhsul postu yaratma funksiyası
+# NOTE: Bu funksiya hələlik yarımçıq qalıb və işləmir
+# Gələcəkdə tamamlanacaq və aktivləşdiriləcək
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def create_product_post_from_url(request):
     """
+    TODO: GƏLƏCƏKDƏ AKTİVLƏŞDİRİLƏCƏK
+    
     YENİ FUNKSİYA: Sayt linkindən məhsul məlumatlarını çəkib avtomatik post yaradır
     
     Workflow:
@@ -3678,6 +3759,277 @@ def create_product_post_from_url(request):
     }
     
     Response: create_product_post ilə eyni format + source info
+    
+    STATUS: Hələlik işləmir - gələcəkdə tamamlanacaq
+    """
+    # TODO: Gələcəkdə aktivləşdiriləcək - hələlik funksiya işləmir
+    # NOTE: Bu funksiya yarımçıq qalıb və gələcəkdə tamamlanacaq
+    return Response({
+        "error": "Bu funksiya hələlik işləmir. Gələcəkdə aktivləşdiriləcək. Hələlik məhsul şəklini yükləyərək post yarada bilərsiniz.",
+        "status": "not_implemented"
+    }, status=status.HTTP_501_NOT_IMPLEMENTED)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def analyze_image_and_create_post(request):
+    """
+    Analyze generated ad image with OpenAI Vision API and create post
+    
+    POST /api/ai/analyze-image-and-create-post/
+    
+    Body (JSON):
+    {
+        "image_url": "https://...",  // Required - URL of the generated ad image
+        "product_name": "Product Name"  // Optional
+    }
+    
+    Returns:
+    {
+        "success": true,
+        "post": {
+            "id": "uuid",
+            "title": "...",
+            "content": "...",
+            "hashtags": [...],
+            "image_url": "...",
+            "status": "pending_approval"
+        }
+    }
+    """
+    user = request.user
+    
+    try:
+        image_url = request.data.get('image_url')
+        product_name = request.data.get('product_name', '')
+        
+        if not image_url:
+            return Response({
+                "error": "Şəkil URL-i tələb olunur"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        logger.info(f"🖼️ Şəkil analizi və post yaradılması - User: {user.email}")
+        logger.info(f"   Image URL: {image_url}")
+        
+        # Step 1: Download image and convert to base64
+        logger.info("📥 Şəkil yüklənir...")
+        try:
+            image_response = requests.get(image_url, timeout=30)
+            image_response.raise_for_status()
+            image_data = image_response.content
+            base64_image = base64.b64encode(image_data).decode('utf-8')
+            
+            # Detect content type
+            content_type = image_response.headers.get('Content-Type', 'image/jpeg')
+            if 'png' in content_type.lower():
+                data_url_format = 'image/png'
+            elif 'jpeg' in content_type.lower() or 'jpg' in content_type.lower():
+                data_url_format = 'image/jpeg'
+            else:
+                data_url_format = 'image/jpeg'
+            
+            logger.info(f"✅ Şəkil yükləndi: {len(image_data)} bytes, format: {data_url_format}")
+        except Exception as e:
+            logger.error(f"❌ Şəkil yüklənə bilmədi: {str(e)}")
+            return Response({
+                "error": f"Şəkil yüklənə bilmədi: {str(e)}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Step 2: Analyze image with OpenAI Vision API
+        logger.info("🤖 OpenAI Vision API ilə şəkil analiz edilir...")
+        try:
+            openai_client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+            
+            analysis_prompt = f"""Bu reklam şəklini detallı analiz et və sosial media postu üçün məzmun yarat.
+
+Şəkil haqqında:
+- Şəkildə nə göstərilir?
+- Məhsulun xüsusiyyətləri nələrdir?
+- Rənglər, dizayn, kompozisiya necədir?
+- Hədəf auditoriya kimdir?
+- Hansı emosiyalar oyadılır?
+
+Yalnız JSON formatında cavab ver (heç bir əlavə mətn yazma):
+{{
+    "title": "Post başlığı (50-80 simvol)",
+    "description": "Post təsviri (150-250 simvol)",
+    "content": "Tam post məzmunu (Hook + Body + CTA)",
+    "hook": "Cəlbedici başlıq (50-80 simvol)",
+    "body": "Faydalar və xüsusiyyətlər (150-250 simvol)",
+    "cta": "Çağırış (40-60 simvol)",
+    "hashtags": ["#hashtag1", "#hashtag2", "#hashtag3", ...],
+    "product_type": "Məhsul növü",
+    "target_audience": "Hədəf auditoriya"
+}}
+
+Məzmun Azərbaycan dilində olmalıdır və Instagram/Facebook üçün uyğun olmalıdır."""
+            
+            vision_response = openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": analysis_prompt
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{data_url_format};base64,{base64_image}",
+                                    "detail": "high"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                max_tokens=1500,
+                temperature=0.7
+            )
+            
+            analysis_text = vision_response.choices[0].message.content.strip()
+            
+            # Remove markdown code blocks if present
+            if analysis_text.startswith('```json'):
+                analysis_text = analysis_text[7:]
+            if analysis_text.startswith('```'):
+                analysis_text = analysis_text[3:]
+            if analysis_text.endswith('```'):
+                analysis_text = analysis_text[:-3]
+            analysis_text = analysis_text.strip()
+            
+            # Parse JSON
+            post_data = json.loads(analysis_text)
+            logger.info(f"✅ Şəkil analiz edildi")
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ JSON parse xətası: {str(e)}")
+            logger.error(f"   Response: {analysis_text[:500]}")
+            return Response({
+                "error": f"AI cavabı parse edilə bilmədi: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            logger.error(f"❌ OpenAI Vision API xətası: {str(e)}", exc_info=True)
+            return Response({
+                "error": f"Şəkil analiz edilə bilmədi: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # Step 3: Create post
+        logger.info("📝 Post yaradılır...")
+        try:
+            from posts.models import Post
+            
+            # Extract data
+            title = post_data.get('title') or post_data.get('hook', 'Yeni Reklam Postu')
+            content = post_data.get('content', '')
+            if not content:
+                hook = post_data.get('hook', '')
+                body = post_data.get('body', '')
+                cta = post_data.get('cta', '')
+                hashtags_str = ' '.join(post_data.get('hashtags', []))
+                content = f"{hook}\n\n{body}\n\n{cta}\n\n{hashtags_str}".strip()
+            
+            hashtags = post_data.get('hashtags', [])
+            description = post_data.get('description') or post_data.get('body', '')
+            
+            post = Post.objects.create(
+                user=user,
+                title=title,
+                content=content,
+                hashtags=hashtags,
+                description=description[:200] if description else '',
+                image_url=image_url,
+                ai_generated=True,
+                ai_prompt=f"Image analysis for: {product_name or 'Generated ad image'}",
+                status='pending_approval',
+                requires_approval=True
+            )
+            
+            logger.info(f"✅ Post yaradıldı: {post.id}")
+            
+            # Step 4: Apply automatic branding if enabled
+            try:
+                from accounts.models import CompanyProfile
+                from posts.branding import ImageBrandingService
+                from django.core.files.base import ContentFile
+                import os
+                
+                company_profile = CompanyProfile.objects.filter(user=user).first()
+                
+                if company_profile and company_profile.branding_enabled and company_profile.logo:
+                    logger.info(f"🎨 Avtomatik brendləşmə tətbiq olunur...")
+                    
+                    # Download image from URL
+                    try:
+                        img_response = requests.get(image_url, timeout=30)
+                        img_response.raise_for_status()
+                        image_data = img_response.content
+                        
+                        # Save to post.custom_image
+                        filename = f"post_{post.id}_{uuid.uuid4()}.png"
+                        post.custom_image.save(filename, ContentFile(image_data), save=True)
+                        
+                        # Check if logo file exists
+                        if os.path.exists(company_profile.logo.path):
+                            branding_service = ImageBrandingService(company_profile)
+                            image_path = post.custom_image.path
+                            logger.info(f"   Brendləşmə tətbiq olunur: {image_path}")
+                            
+                            branded_image = branding_service.apply_branding(image_path)
+                            output = branding_service.save_branded_image(branded_image, format='PNG')
+                            
+                            # Replace with branded version
+                            branded_filename = f"branded_{post.id}.png"
+                            post.custom_image.save(branded_filename, ContentFile(output.read()), save=True)
+                            post.save()
+                            
+                            logger.info(f"✅ Brendləşmə uğurla tətbiq olundu")
+                        else:
+                            logger.warning(f"⚠️ Logo faylı tapılmadı: {company_profile.logo.path}")
+                    except Exception as branding_error:
+                        logger.error(f"❌ Brendləşmə xətası: {str(branding_error)}", exc_info=True)
+                        # Continue without branding - post is still created
+                else:
+                    if not company_profile:
+                        logger.info("ℹ️ Company profile yoxdur, brendləşmə tətbiq edilmədi")
+                    elif not company_profile.branding_enabled:
+                        logger.info("ℹ️ Brendləşmə deaktivdir")
+                    elif not company_profile.logo:
+                        logger.info("ℹ️ Logo yoxdur, brendləşmə tətbiq edilmədi")
+            except Exception as e:
+                logger.error(f"❌ Brendləşmə yoxlanışı xətası: {str(e)}", exc_info=True)
+                # Continue without branding - post is still created
+            
+            # Return response
+            return Response({
+                "success": True,
+                "message": "Post uğurla yaradıldı",
+                "post": {
+                    "id": str(post.id),
+                    "title": post.title,
+                    "content": post.content,
+                    "description": post.description,
+                    "hashtags": post.hashtags,
+                    "image_url": post.image_url,
+                    "status": post.status
+                }
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            logger.error(f"❌ Post yaradıla bilmədi: {str(e)}", exc_info=True)
+            return Response({
+                "error": f"Post yaradıla bilmədi: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+    except Exception as e:
+        logger.error(f"❌ Xəta: {str(e)}", exc_info=True)
+        return Response({
+            "error": f"Xəta baş verdi: {str(e)}"
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    
+    # TODO: Aktivləşdirildikdə aşağıdakı kodu uncomment edin
     """
     try:
         from .url_product_scraper import (
@@ -3759,37 +4111,6 @@ def create_product_post_from_url(request):
             # Step 3: AI Analysis (fallback)
             logger.info(f"🤖 Step 3: AI ilə məhsul məlumatları çıxarılır...")
         
-        # try:
-        #     extracted_data = extract_product_info_with_ai(html_content, final_url)
-            
-        #     logger.info(f"✅ Məhsul məlumatları çıxarıldı:")
-        #     logger.info(f"   Ad: {extracted_data.get('product_name', 'N/A')}")
-        #     logger.info(f"   Növ: {extracted_data.get('product_type', 'N/A')}")
-        #     logger.info(f"   Qiymət: {extracted_data.get('price', 'N/A')}")
-            
-        #     # Safely log image URL
-        #     img_url = extracted_data.get('main_image_url')
-        #     if img_url:
-        #         logger.info(f"   Şəkil: {img_url[:80]}...")
-        #     else:
-        #         logger.warning("   ⚠️ Şəkil URL-i tapılmadı!")
-        #         logger.info(f"   Çıxarılan məlumatlar: {json.dumps(extracted_data, ensure_ascii=False, indent=2)}")
-            
-        # except Exception as ai_error:
-        #     logger.error(f"❌ AI analiz xətası: {str(ai_error)}", exc_info=True)
-        #     return Response({
-        #         "error": f"Məhsul məlumatları çıxarıla bilmədi: {str(ai_error)}. Şəkil yükləmə metodunu istifadə edin."
-        #     }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-        # # Hələlik post yaratmadan, yalnız məlumatları qaytarırıq
-        # logger.info(f"📊 Məhsul məlumatları hazırdır, qaytarılır...")
-        
-        #     return Response({
-        #     "success": True,
-        #     "product_data": extracted_data,
-        #     "message": "Məhsul məlumatları uğurla çəkildi"
-        # }, status=status.HTTP_200_OK)
-        
         # TODO: Post yaratma kodu - sonra aktivləşdiriləcək
         # COMMENTED OUT - Hələlik post yaratmırıq, yalnız məlumatları qaytarırıq
         # Step 3 və sonrası: Post yaratma workflow-u (sonra aktivləşdiriləcək)
@@ -3799,6 +4120,7 @@ def create_product_post_from_url(request):
         return Response({
             "error": f"URL-dən post yaradıla bilmədi: {str(e)}"
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    """
 
 
 @api_view(['POST'])

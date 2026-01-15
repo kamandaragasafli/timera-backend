@@ -26,6 +26,10 @@ urlpatterns = [
     path('product-post/', views.create_product_post, name='create_product_post'),
     # Product Post from URL (NEW)
     path('product-post-from-url/', views.create_product_post_from_url, name='create_product_post_from_url'),
+    # Upload product image for n8n
+    path('upload-product-image/', views.upload_product_image_for_n8n, name='upload_product_image_for_n8n'),
+    # Analyze image and create post
+    path('analyze-image-and-create-post/', views.analyze_image_and_create_post, name='analyze_image_and_create_post'),
     # Social Media Analysis
     path('instagram-analysis/', views.analyze_instagram_profile, name='analyze_instagram_profile'),
     path('facebook-analysis/', views.analyze_facebook_profile, name='analyze_facebook_profile'),

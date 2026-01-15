@@ -10,7 +10,7 @@ class SocialAccountSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'platform', 'platform_user_id', 'platform_username',
             'display_name', 'profile_picture_url', 'is_active',
-            'last_used', 'settings', 'created_at', 'updated_at'
+            'last_used', 'settings', 'expires_at', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     

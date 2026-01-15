@@ -23,6 +23,7 @@ class PostSerializer(serializers.ModelSerializer):
     design_url_absolute = serializers.SerializerMethodField()
     design_thumbnail_absolute = serializers.SerializerMethodField()
     image_url_absolute = serializers.SerializerMethodField()
+    post_platforms = serializers.SerializerMethodField()
     
     class Meta:
         model = Post
@@ -34,7 +35,7 @@ class PostSerializer(serializers.ModelSerializer):
             'ai_generated', 'ai_content_batch', 'brand_voice', 'ai_prompt',
             'requires_approval', 'approved_by', 'approved_at',
             'scheduled_time', 'status', 'platforms_count', 'character_count',
-            'created_at', 'updated_at', 'published_at'
+            'post_platforms', 'created_at', 'updated_at', 'published_at'
         ]
         read_only_fields = [
             'id', 'ai_generated', 'ai_content_batch', 'approved_by', 'approved_at',
@@ -141,6 +142,23 @@ class PostSerializer(serializers.ModelSerializer):
     
     def get_character_count(self, obj):
         return len(obj.content) if obj.content else 0
+    
+    def get_post_platforms(self, obj):
+        """Return PostPlatform data for this post"""
+        post_platforms = obj.postplatform_set.all().select_related('social_account')
+        return [
+            {
+                'id': str(pp.id),
+                'social_account': str(pp.social_account.id),
+                'social_account_name': pp.social_account.platform,
+                'social_account_username': pp.social_account.platform_username,
+                'social_account_display_name': pp.social_account.display_name,
+                'status': pp.status,
+                'platform_post_id': pp.platform_post_id,
+                'platform_post_url': pp.platform_post_url,
+            }
+            for pp in post_platforms
+        ]
     
     def get_custom_image_url(self, obj):
         """Return absolute URL for custom image"""
@@ -267,17 +285,20 @@ class PostPlatformSerializer(serializers.ModelSerializer):
     """Serializer for PostPlatform model"""
     
     social_account_name = serializers.CharField(source='social_account.platform', read_only=True)
+    social_account_username = serializers.CharField(source='social_account.platform_username', read_only=True)
+    social_account_display_name = serializers.CharField(source='social_account.display_name', read_only=True)
     
     class Meta:
         model = PostPlatform
         fields = [
-            'id', 'social_account', 'social_account_name', 'platform_content',
-            'platform_specific_data', 'status', 'platform_post_id', 'platform_post_url',
+            'id', 'social_account', 'social_account_name', 'social_account_username', 'social_account_display_name',
+            'platform_content', 'platform_specific_data', 'status', 'platform_post_id', 'platform_post_url',
             'error_message', 'retry_count', 'last_retry_at', 'published_at',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'social_account_name', 'platform_post_id', 'platform_post_url',
+            'id', 'social_account_name', 'social_account_username', 'social_account_display_name',
+            'platform_post_id', 'platform_post_url',
             'error_message', 'retry_count', 'last_retry_at', 'published_at',
             'created_at', 'updated_at'
         ]

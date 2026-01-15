@@ -124,6 +124,48 @@ def publish_scheduled_posts():
     }
 
 
+@shared_task
+def cleanup_rejected_posts():
+    """
+    Clean up rejected/cancelled posts based on data retention policy.
+    Runs daily via Celery Beat.
+    
+    Data retention policy:
+    - Default: Delete cancelled posts after 30 days
+    - Can be configured per user in settings (immediately or X days)
+    """
+    logger.info("🧹 Starting cleanup of rejected posts...")
+    
+    # Default retention: 30 days
+    # In production, this should be configurable per user
+    retention_days = getattr(settings, 'DELETED_POSTS_RETENTION_DAYS', 30)
+    
+    cutoff_date = timezone.now() - timedelta(days=retention_days)
+    
+    # Find cancelled posts older than retention period
+    old_cancelled_posts = Post.objects.filter(
+        status='cancelled',
+        updated_at__lte=cutoff_date
+    )
+    
+    count = old_cancelled_posts.count()
+    
+    if count > 0:
+        logger.info(f"🗑️  Found {count} cancelled posts to delete (older than {retention_days} days)")
+        
+        # Delete posts (this will cascade to PostPlatform entries)
+        deleted_count = old_cancelled_posts.delete()[0]
+        
+        logger.info(f"✅ Deleted {deleted_count} cancelled posts")
+    else:
+        logger.info("✅ No cancelled posts to clean up")
+    
+    return {
+        'deleted': count,
+        'retention_days': retention_days
+    }
+
+
 def _publish_to_facebook(post, post_platform):
     """Publish post to Facebook"""
     try:
