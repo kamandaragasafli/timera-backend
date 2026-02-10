@@ -24,7 +24,7 @@ class SocialAccount(models.Model):
     platform_user_id = models.CharField(max_length=100)
     platform_username = models.CharField(max_length=100, blank=True)
     display_name = models.CharField(max_length=200, blank=True)
-    profile_picture_url = models.URLField(max_length=500, blank=True)
+    profile_picture_url = models.URLField(max_length=500, blank=True)  # Reduced to 500 to match DB constraint
     
     # Encrypted token storage
     access_token_encrypted = models.TextField()

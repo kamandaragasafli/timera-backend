@@ -33,7 +33,7 @@ SECRET_KEY = config("SECRET_KEY")
 
 DEBUG = config("DEBUG", default=False, cast=bool)
 
-# Comma-separated env, e.g.: "timera.az,www.timera.az,timera-backend.tirvasoft.az"
+# Comma-separated env, e.g.: "timera.az,www.timera.az,timera-backend.trivasoft.az"
 ALLOWED_HOSTS = [
     h.strip()
     for h in config("ALLOWED_HOSTS", default="timera-backend.trivasoft.az,www.timera.az,localhost,127.0.0.1").split(",")

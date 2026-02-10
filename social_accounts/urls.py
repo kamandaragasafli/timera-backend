@@ -9,6 +9,9 @@ urlpatterns = [
     path('auth-url/<str:platform>/', views.GetOAuthUrlView.as_view(), name='get_oauth_url'),
     path('callback/<str:platform>/', views.OAuthCallbackView.as_view(), name='oauth_callback'),
     
+    # Test permissions (for Meta App Review)
+    path('<uuid:pk>/test-permissions/', views.TestPermissionsView.as_view(), name='test_permissions'),
+    
     # Disconnect account
     path('<uuid:pk>/', views.DisconnectAccountView.as_view(), name='disconnect_account'),
 ]

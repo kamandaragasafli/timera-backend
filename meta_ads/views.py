@@ -560,6 +560,122 @@ def resume_ad(request, ad_id):
 # ANALYTICS
 # ============================================================================
 
+class TestPermissionsView(APIView):
+    """Test API calls for Meta Ads permissions that require advanced access"""
+    
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, account_id):
+        """Test permissions by making API calls"""
+        from django.shortcuts import get_object_or_404
+        from .models import MetaAdAccount
+        
+        account = get_object_or_404(MetaAdAccount, account_id=account_id, user=request.user)
+        
+        access_token = account.get_access_token()
+        if not access_token:
+            return Response({
+                'error': 'No access token found'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        results = {}
+        
+        # Test ads_read permission - Get campaigns
+        try:
+            campaigns_response = requests.get(
+                f"https://graph.facebook.com/v18.0/act_{account_id}/campaigns",
+                params={
+                    'access_token': access_token,
+                    'fields': 'id,name,status',
+                    'limit': 1
+                }
+            )
+            results['ads_read'] = {
+                'status': campaigns_response.status_code,
+                'success': campaigns_response.status_code == 200,
+                'data': campaigns_response.json() if campaigns_response.status_code == 200 else campaigns_response.text[:200]
+            }
+        except Exception as e:
+            results['ads_read'] = {
+                'status': 'error',
+                'success': False,
+                'error': str(e)[:200]
+            }
+        
+        # Test ads_management permission - Try to get ad accounts (read operation)
+        try:
+            accounts_response = requests.get(
+                "https://graph.facebook.com/v18.0/me/adaccounts",
+                params={
+                    'access_token': access_token,
+                    'fields': 'id,name,account_id',
+                    'limit': 1
+                }
+            )
+            results['ads_management'] = {
+                'status': accounts_response.status_code,
+                'success': accounts_response.status_code == 200,
+                'data': accounts_response.json() if accounts_response.status_code == 200 else accounts_response.text[:200]
+            }
+        except Exception as e:
+            results['ads_management'] = {
+                'status': 'error',
+                'success': False,
+                'error': str(e)[:200]
+            }
+        
+        # Test business_management permission
+        try:
+            businesses_response = requests.get(
+                "https://graph.facebook.com/v18.0/me/businesses",
+                params={
+                    'access_token': access_token,
+                    'fields': 'id,name',
+                    'limit': 1
+                }
+            )
+            results['business_management'] = {
+                'status': businesses_response.status_code,
+                'success': businesses_response.status_code == 200,
+                'data': businesses_response.json() if businesses_response.status_code == 200 else businesses_response.text[:200]
+            }
+        except Exception as e:
+            results['business_management'] = {
+                'status': 'error',
+                'success': False,
+                'error': str(e)[:200]
+            }
+        
+        # Test read_insights permission
+        try:
+            insights_response = requests.get(
+                f"https://graph.facebook.com/v18.0/act_{account_id}/insights",
+                params={
+                    'access_token': access_token,
+                    'metric': 'impressions,clicks,spend',
+                    'period': 'day',
+                    'date_preset': 'last_7d'
+                }
+            )
+            results['read_insights'] = {
+                'status': insights_response.status_code,
+                'success': insights_response.status_code == 200,
+                'data': insights_response.json() if insights_response.status_code == 200 else insights_response.text[:200]
+            }
+        except Exception as e:
+            results['read_insights'] = {
+                'status': 'error',
+                'success': False,
+                'error': str(e)[:200]
+            }
+        
+        return Response({
+            'message': 'Test API calls completed for Meta Ads permissions',
+            'results': results,
+            'note': 'Meta will track these API calls. Check App Review in 24 hours to see if "Request" button becomes active for ads_management, ads_read, business_management, and read_insights permissions.'
+        })
+
+
 class InsightsView(APIView):
     """Get insights/analytics"""
     

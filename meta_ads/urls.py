@@ -13,6 +13,7 @@ urlpatterns = [
     path('accounts/sync/', views.SyncAdAccountsView.as_view(), name='sync_ad_accounts'),
     path('accounts/', views.AdAccountListView.as_view(), name='ad_account_list'),
     path('accounts/<str:account_id>/', views.AdAccountDetailView.as_view(), name='ad_account_detail'),
+    path('accounts/<str:account_id>/test-permissions/', views.TestPermissionsView.as_view(), name='test_permissions'),
     path('callback/', views.AdAccountCallbackView.as_view(), name='ad_account_callback'),
     
     # Campaigns

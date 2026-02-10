@@ -90,7 +90,8 @@ class CompanyProfile(models.Model):
     brand_analysis = models.JSONField(default=dict, blank=True, help_text="AI-analyzed brand information from logo")
     
     # Branding for Visual Composer
-    slogan = models.CharField(max_length=200, blank=True, help_text="Company slogan to overlay on images")
+    slogan = models.CharField(max_length=200, blank=True, help_text="Company slogan to overlay on images (for branding)")
+    slogan_enabled = models.BooleanField(default=True, help_text="Show slogan on posts (on/off toggle)")
     slogan_size_percent = models.IntegerField(
         default=4,
         validators=[MinValueValidator(2), MaxValueValidator(8)],

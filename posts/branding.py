@@ -25,6 +25,7 @@ class ImageBrandingService:
         self.company_profile = company_profile
         self.logo = company_profile.logo
         self.slogan = company_profile.slogan
+        self.slogan_enabled = getattr(company_profile, 'slogan_enabled', True)
         self.branding_enabled = company_profile.branding_enabled
         
         # Get branding settings
@@ -95,8 +96,8 @@ class ImageBrandingService:
         # Add logo
         base_img = self._add_logo(base_img, logo_img)
         
-        # Add slogan if provided
-        if self.slogan:
+        # Add slogan if provided and enabled
+        if self.slogan and self.slogan_enabled:
             base_img = self._add_slogan(base_img, self.slogan)
         
         # Convert back to RGB for saving

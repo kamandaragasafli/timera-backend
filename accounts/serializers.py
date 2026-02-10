@@ -69,7 +69,7 @@ class CompanyProfileSerializer(serializers.ModelSerializer):
             'social_media_goals', 'preferred_tone', 'content_topics', 'keywords',
             'avoid_topics', 'primary_language', 'posts_to_generate',
             # Branding fields
-            'slogan', 'slogan_size_percent', 'branding_enabled', 'branding_mode', 
+            'slogan', 'slogan_enabled', 'slogan_size_percent', 'branding_enabled', 'branding_mode', 
             'logo_position', 'slogan_position', 'logo_size_percent',
             'gradient_enabled', 'gradient_color', 'gradient_height_percent', 'gradient_position',
             'created_at', 'updated_at'

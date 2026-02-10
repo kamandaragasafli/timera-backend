@@ -714,7 +714,9 @@ class IdeogramService:
                     if industry and industry != 'N/A':
                         prompt = f"{industry} style. {prompt}"
             
-            logger.info(f"🔍 Generating image with NANO BANANA, prompt: {prompt[:100]}...")
+            logger.info(f"🔍 Generating image with NANO BANANA")
+            logger.info(f"📝 Full prompt (first 300 chars): {prompt[:300]}")
+            logger.info(f"📝 Full prompt length: {len(prompt)} characters")
             
             # Call Fal.ai NANO BANANA API
             fal_url = "https://fal.run/fal-ai/nano-banana"

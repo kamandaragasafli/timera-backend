@@ -1,7 +1,10 @@
-from django.urls import path
+from django.urls import path, include
 from . import views
 
 urlpatterns = [
+    # Meta Permissions API - Bütün Meta Business Suite icazələri
+    path('meta/', include('posts.meta_urls')),
+    
     # 1. Root endpoint
     path('', views.PostListCreateView.as_view(), name='posts'),
     

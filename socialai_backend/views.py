@@ -103,7 +103,7 @@ def privacy_policy(request):
         
         <h2>8. Contact Us</h2>
         <p>For privacy concerns, contact us at: <strong>privacy@timera.az</strong></p>
-        <p>For data deletion requests, visit: <a href="https://timera-backend.tirvasoft.az/user-data-deletion/">https://timera-backend.tirvasoft.az/user-data-deletion/</a></p>
+        <p>For data deletion requests, visit: <a href="https://timera-backend.trivasoft.az/user-data-deletion/">https://timera-backend.trivasoft.az/user-data-deletion/</a></p>
     </body>
     </html>
     """
@@ -133,7 +133,7 @@ def user_data_deletion(request):
             # 4. Return confirmation URL and code
             
             return JsonResponse({
-                'url': 'https://timera-backend.tirvasoft.az/delete_user',
+                'url': 'https://timera-backend.trivasoft.az/delete_user',
                 'confirmation_code': 'timera_deletion_confirmed'
             })
         except Exception as e:

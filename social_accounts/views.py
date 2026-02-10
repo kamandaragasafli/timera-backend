@@ -3,7 +3,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.conf import settings
-from django.shortcuts import redirect
+from django.shortcuts import redirect, get_object_or_404
 from django.utils import timezone
 from datetime import timedelta
 import requests
@@ -55,16 +55,41 @@ class GetOAuthUrlView(APIView):
             backend_url = settings.BACKEND_URL
             redirect_uri = f"{backend_url}/api/social-accounts/callback/{platform}/"
             
-            # Request page and Instagram permissions
-            # pages_show_list, pages_manage_posts: for Facebook Pages
-            # pages_messaging: to read and send messages from Page inbox
-            # read_insights: to read Page and Instagram analytics/insights
-            # instagram_basic: to access Instagram account linked to Page
-            # instagram_content_publish: to publish posts to Instagram
-            if platform == 'instagram':
-                permissions_str = 'pages_show_list,pages_manage_posts,pages_messaging,read_insights,instagram_basic,instagram_content_publish'
-            else:
-                permissions_str = 'pages_show_list,pages_manage_posts,pages_messaging,read_insights,instagram_basic'
+            # Request ALL Meta Business Suite permissions for App Review
+            # Facebook Pages:
+            # - pages_show_list: List Facebook Pages user manages
+            # - pages_manage_posts: Publish posts to Facebook Pages
+            # - pages_read_engagement: Read Page engagement insights and post statistics
+            # Instagram:
+            # - instagram_basic: Access Instagram Business Account info
+            # - instagram_content_publish: Publish posts to Instagram
+            # - instagram_manage_messages: Read Instagram Direct messages
+            # - instagram_business_manage_messages: Send messages from Instagram Business Account
+            # Business:
+            # - business_management: Access Business Manager accounts
+            # Ads:
+            # - ads_read: Read ad accounts, campaigns, and insights
+            # - ads_management: Create and manage ad campaigns
+            # Additional:
+            # - pages_messaging: Read and send messages from Page inbox (for completeness)
+            # - read_insights: Read Page and Instagram analytics (legacy, kept for compatibility)
+            
+            # Request all permissions for both Facebook and Instagram
+            # Meta App Review requires all permissions to be requested together
+            permissions_str = (
+                'pages_show_list,'  # List pages
+                'pages_manage_posts,'  # Publish to Facebook
+                'pages_read_engagement,'  # Page engagement stats
+                'instagram_basic,'  # Instagram account info
+                'instagram_content_publish,'  # Publish to Instagram
+                'instagram_manage_messages,'  # Read Instagram messages
+                'instagram_business_manage_messages,'  # Send Instagram messages
+                'business_management,'  # Business accounts
+                'ads_read,'  # Read ads data
+                'ads_management,'  # Manage ads
+                'pages_messaging,'  # Page messages (additional)
+                'read_insights'  # Legacy insights (additional)
+            )
             
             auth_url = (
                 f"https://www.facebook.com/v18.0/dialog/oauth?"
@@ -230,11 +255,18 @@ class OAuthCallbackView(APIView):
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
-            logger.error(f"OAuth callback error for {platform}: {str(e)}", exc_info=True)
-            print(f"OAuth callback error: {str(e)}")
+            error_msg = str(e)
+            logger.error(f"OAuth callback error for {platform}: {error_msg}", exc_info=True)
+            print(f"OAuth callback error: {error_msg}")
             import traceback
             traceback.print_exc()
-            return redirect(f"{settings.FRONTEND_URL}/social-accounts?error=callback_failed&details={str(e)[:50]}")
+            
+            # More detailed error message
+            error_details = error_msg[:100]  # Allow longer error message
+            # URL encode the error details
+            import urllib.parse
+            error_details_encoded = urllib.parse.quote(error_details)
+            return redirect(f"{settings.FRONTEND_URL}/social-accounts?error=callback_failed&details={error_details_encoded}")
     
     def _handle_meta_callback(self, request, platform, code, user_id):
         """Handle Facebook/Instagram OAuth callback"""
@@ -333,25 +365,98 @@ class OAuthCallbackView(APIView):
                     
                     # Store Facebook Page
                     print(f"💾 Saving page: {page_name} (ID: {page_id})")
-                    account, created = SocialAccount.objects.update_or_create(
-                        user=user,
-                        platform='facebook',
-                        platform_user_id=page_id,
-                        defaults={
-                            'platform_username': page_name,
-                            'display_name': page_name,
-                            'profile_picture_url': page_pic_data.get('data', {}).get('url', ''),
-                            'is_active': True,
-                            'expires_at': timezone.now() + timedelta(seconds=expires_in),
-                            'settings': {
-                                'page_category': page.get('category', ''),
-                                'page_tasks': page.get('tasks', [])
+                    
+                    # Safely truncate all fields to prevent DB errors
+                    safe_page_name = (page_name or '')[:100]  # Max 100 for platform_username
+                    safe_display_name = (page_name or '')[:200]  # Max 200 for display_name
+                    pic_url = page_pic_data.get('data', {}).get('url', '') if page_pic_data.get('data') else ''
+                    safe_pic_url = pic_url[:500] if pic_url else ''  # Max 500 for profile_picture_url (DB limit)
+                    
+                    # Truncate settings fields too - be very conservative
+                    # Use minimal settings to avoid any JSON serialization issues
+                    page_category = (page.get('category', '') or '')[:50]  # Very short to be safe
+                    page_tasks = page.get('tasks', [])
+                    if isinstance(page_tasks, list):
+                        # Limit tasks list size and truncate each task string
+                        page_tasks = [str(task)[:50] for task in page_tasks[:5]]  # Max 5 tasks, each max 50 chars
+                    else:
+                        page_tasks = []
+                    
+                    # Build minimal settings dict
+                    settings_dict = {}
+                    if page_category:
+                        settings_dict['page_category'] = page_category
+                    if page_tasks:
+                        settings_dict['page_tasks'] = page_tasks
+                    
+                    try:
+                        account, created = SocialAccount.objects.update_or_create(
+                            user=user,
+                            platform='facebook',
+                            platform_user_id=str(page_id)[:100],  # Ensure page_id is string and not too long
+                            defaults={
+                                'platform_username': safe_page_name[:100] if safe_page_name else '',
+                                'display_name': safe_display_name[:200] if safe_display_name else '',
+                                'profile_picture_url': safe_pic_url[:500] if safe_pic_url else '',
+                                'is_active': True,
+                                'expires_at': timezone.now() + timedelta(seconds=expires_in),
+                                'settings': settings_dict  # Minimal settings
                             }
-                        }
-                    )
-                    account.set_access_token(page_token)
-                    account.save()
-                    print(f"✅ Saved account: {account.id} (created={created})")
+                        )
+                        # Save account first
+                        account.save()
+                        print(f"✅ Account object saved: {account.id} (created={created})")
+                        
+                        # Then set access token (this encrypts and saves)
+                        try:
+                            account.set_access_token(page_token)
+                            account.save()
+                            print(f"✅ Access token saved successfully")
+                        except Exception as token_error:
+                            print(f"⚠️ Warning: Could not save access token: {str(token_error)}")
+                            # Account is saved, token can be set later
+                        
+                        print(f"✅ Saved account: {account.id} (created={created})")
+                    except Exception as save_error:
+                        error_str = str(save_error)
+                        print(f"❌ Error saving account: {error_str}")
+                        print(f"❌ Error type: {type(save_error).__name__}")
+                        import traceback
+                        traceback.print_exc()
+                        
+                        # Try with even shorter values and minimal data
+                        try:
+                            print(f"🔄 Retrying with minimal data...")
+                            account, created = SocialAccount.objects.update_or_create(
+                                user=user,
+                                platform='facebook',
+                                platform_user_id=str(page_id)[:50],  # Very short
+                                defaults={
+                                    'platform_username': safe_page_name[:50] if safe_page_name else 'Facebook Page',
+                                    'display_name': safe_display_name[:100] if safe_display_name else 'Facebook Page',
+                                    'profile_picture_url': '',  # Empty to avoid any issues
+                                    'is_active': True,
+                                    'expires_at': timezone.now() + timedelta(seconds=expires_in),
+                                    'settings': {}  # Empty settings to avoid any issues
+                                }
+                            )
+                            account.save()
+                            print(f"✅ Account saved with minimal data: {account.id}")
+                            
+                            # Try to set token separately
+                            try:
+                                account.set_access_token(page_token)
+                                account.save()
+                                print(f"✅ Token saved on retry")
+                            except Exception as token_error2:
+                                print(f"⚠️ Token save failed on retry: {str(token_error2)}")
+                            
+                            print(f"✅ Saved account with shorter fields: {account.id} (created={created})")
+                        except Exception as retry_error:
+                            print(f"❌ Retry also failed: {str(retry_error)}")
+                            import traceback
+                            traceback.print_exc()
+                            raise retry_error
                     break  # Use first page found
             else:
                 print(f"❌ No pages found in response")
@@ -410,25 +515,57 @@ class OAuthCallbackView(APIView):
                         
                         # Store Instagram account
                         print(f"💾 Saving Instagram account: @{ig_info.get('username', 'unknown')}")
-                        account, created = SocialAccount.objects.update_or_create(
-                            user=user,
-                            platform='instagram',
-                            platform_user_id=ig_account_id,
-                            defaults={
-                                'platform_username': ig_info.get('username', ''),
-                                'display_name': ig_info.get('name', ''),
-                                'profile_picture_url': ig_info.get('profile_picture_url', ''),
-                                'is_active': True,
-                                'expires_at': timezone.now() + timedelta(seconds=expires_in),
-                                'settings': {
-                                    'page_id': page_id,
-                                    'page_name': page['name']
+                        
+                        # Safely truncate all fields to prevent DB errors
+                        safe_username = (ig_info.get('username', '') or '')[:100]  # Max 100
+                        safe_name = (ig_info.get('name', '') or '')[:200]  # Max 200
+                        safe_pic_url = (ig_info.get('profile_picture_url', '') or '')[:500]  # Max 500
+                        safe_page_id = (page_id or '')[:100]  # Max 100
+                        safe_page_name = (page['name'] or '')[:100]  # Max 100 for settings
+                        
+                        try:
+                            account, created = SocialAccount.objects.update_or_create(
+                                user=user,
+                                platform='instagram',
+                                platform_user_id=ig_account_id[:100],  # Ensure not too long
+                                defaults={
+                                    'platform_username': safe_username,
+                                    'display_name': safe_name,
+                                    'profile_picture_url': safe_pic_url,
+                                    'is_active': True,
+                                    'expires_at': timezone.now() + timedelta(seconds=expires_in),
+                                    'settings': {
+                                        'page_id': safe_page_id,
+                                        'page_name': safe_page_name
+                                    }
                                 }
-                            }
-                        )
-                        account.set_access_token(page_token)
-                        account.save()
-                        print(f"✅ Saved Instagram account: {account.id} (created={created})")
+                            )
+                            account.set_access_token(page_token)
+                            account.save()
+                            print(f"✅ Saved Instagram account: {account.id} (created={created})")
+                        except Exception as save_error:
+                            print(f"❌ Error saving Instagram account: {str(save_error)}")
+                            # Try with even shorter values
+                            try:
+                                account, created = SocialAccount.objects.update_or_create(
+                                    user=user,
+                                    platform='instagram',
+                                    platform_user_id=ig_account_id[:100],
+                                    defaults={
+                                        'platform_username': safe_username[:50],  # Even shorter
+                                        'display_name': safe_name[:100],  # Even shorter
+                                        'profile_picture_url': safe_pic_url[:400],  # Even shorter
+                                        'is_active': True,
+                                        'expires_at': timezone.now() + timedelta(seconds=expires_in),
+                                        'settings': {}  # Empty settings to avoid any issues
+                                    }
+                                )
+                                account.set_access_token(page_token)
+                                account.save()
+                                print(f"✅ Saved Instagram account with shorter fields: {account.id} (created={created})")
+                            except Exception as retry_error:
+                                print(f"❌ Retry also failed: {str(retry_error)}")
+                                raise retry_error
                         break  # Use first Instagram account found
                     else:
                         print(f"❌ No Instagram account linked to page '{page_name}'")
@@ -488,9 +625,9 @@ class OAuthCallbackView(APIView):
             platform='linkedin',
             platform_user_id=linkedin_user_id,
             defaults={
-                'platform_username': email,
-                'display_name': name,
-                'profile_picture_url': picture,
+                'platform_username': (email or '')[:100],  # Truncate to 100 chars
+                'display_name': (name or '')[:200],  # Truncate to 200 chars
+                'profile_picture_url': (picture or '')[:500] if picture else '',  # Truncate to 500 chars (DB limit)
                 'is_active': True,
                 'expires_at': timezone.now() + timedelta(seconds=expires_in),
                 'settings': {
@@ -568,9 +705,9 @@ class OAuthCallbackView(APIView):
             platform='youtube',
             platform_user_id=channel_id,
             defaults={
-                'platform_username': channel_info.get('customUrl', channel_info.get('title', '')),
-                'display_name': channel_info.get('title', ''),
-                'profile_picture_url': channel_info.get('thumbnails', {}).get('default', {}).get('url', ''),
+                'platform_username': (channel_info.get('customUrl', channel_info.get('title', '')) or '')[:100],  # Truncate to 100 chars
+                'display_name': (channel_info.get('title', '') or '')[:200],  # Truncate to 200 chars
+                'profile_picture_url': (channel_info.get('thumbnails', {}).get('default', {}).get('url', '') or '')[:500] if channel_info.get('thumbnails', {}).get('default', {}).get('url') else '',  # Truncate to 500 chars (DB limit)
                 'is_active': True,
                 'expires_at': timezone.now() + timedelta(seconds=expires_in),
                 'settings': {
@@ -650,9 +787,9 @@ class OAuthCallbackView(APIView):
             platform='tiktok',
             platform_user_id=open_id,
             defaults={
-                'platform_username': username,
-                'display_name': display_name,
-                'profile_picture_url': avatar_url,
+                'platform_username': (username or '')[:100],  # Truncate to 100 chars
+                'display_name': (display_name or '')[:200],  # Truncate to 200 chars
+                'profile_picture_url': (avatar_url or '')[:500] if avatar_url else '',  # Truncate to 500 chars (DB limit)
                 'is_active': True,
                 'expires_at': timezone.now() + timedelta(seconds=expires_in),
                 'settings': {
@@ -666,6 +803,106 @@ class OAuthCallbackView(APIView):
             account.set_refresh_token(refresh_token)
         account.save()
         print(f"✅ Saved TikTok account: {account.id} (created={created})")
+
+
+class TestPermissionsView(APIView):
+    """Test API calls for permissions that require advanced access"""
+    
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request, pk):
+        """Test permissions by making API calls"""
+        import requests
+        from django.utils import timezone
+        
+        account = get_object_or_404(SocialAccount, pk=pk, user=request.user)
+        
+        if account.platform not in ['facebook', 'instagram']:
+            return Response({
+                'error': 'This endpoint is only for Facebook/Instagram accounts'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        access_token = account.get_access_token()
+        if not access_token:
+            return Response({
+                'error': 'No access token found'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        results = {}
+        page_id = account.settings.get('page_id') or account.platform_user_id
+        
+        # Test pages_messaging permission
+        try:
+            # Get conversations (messages)
+            messages_response = requests.get(
+                f"https://graph.facebook.com/v18.0/{page_id}/conversations",
+                params={
+                    'access_token': access_token,
+                    'limit': 1,
+                    'fields': 'id,message_count'
+                }
+            )
+            results['pages_messaging'] = {
+                'status': messages_response.status_code,
+                'success': messages_response.status_code == 200,
+                'data': messages_response.json() if messages_response.status_code == 200 else messages_response.text[:200]
+            }
+        except Exception as e:
+            results['pages_messaging'] = {
+                'status': 'error',
+                'success': False,
+                'error': str(e)[:200]
+            }
+        
+        # Test read_insights permission
+        try:
+            # Get page insights
+            insights_response = requests.get(
+                f"https://graph.facebook.com/v18.0/{page_id}/insights",
+                params={
+                    'access_token': access_token,
+                    'metric': 'page_fans,page_impressions',
+                    'period': 'day',
+                    'since': int((timezone.now() - timezone.timedelta(days=7)).timestamp()),
+                    'until': int(timezone.now().timestamp())
+                }
+            )
+            results['read_insights'] = {
+                'status': insights_response.status_code,
+                'success': insights_response.status_code == 200,
+                'data': insights_response.json() if insights_response.status_code == 200 else insights_response.text[:200]
+            }
+        except Exception as e:
+            results['read_insights'] = {
+                'status': 'error',
+                'success': False,
+                'error': str(e)[:200]
+            }
+        
+        # Test pages_manage_posts permission (if needed)
+        try:
+            # Just check permissions (this doesn't require posting)
+            perms_response = requests.get(
+                "https://graph.facebook.com/v18.0/me/permissions",
+                params={'access_token': access_token}
+            )
+            results['permissions_check'] = {
+                'status': perms_response.status_code,
+                'success': perms_response.status_code == 200,
+                'data': perms_response.json() if perms_response.status_code == 200 else None
+            }
+        except Exception as e:
+            results['permissions_check'] = {
+                'status': 'error',
+                'success': False,
+                'error': str(e)[:200]
+            }
+        
+        return Response({
+            'message': 'Test API calls completed',
+            'results': results,
+            'note': 'Meta will track these API calls. Check App Review in 24 hours to see if "Request" button becomes active.'
+        })
 
 
 class DisconnectAccountView(generics.DestroyAPIView):
