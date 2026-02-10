@@ -134,8 +134,8 @@ AUTH_PASSWORD_VALIDATORS = [
 # -------------------------
 # INTERNATIONALIZATION
 # -------------------------
-LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
+LANGUAGE_CODE = "az"  # Azerbaijani
+TIME_ZONE = "Asia/Baku"  # Baku time (UTC+4)
 USE_I18N = True
 USE_TZ = True
 

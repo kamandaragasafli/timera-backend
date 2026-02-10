@@ -34,6 +34,7 @@ class GetOAuthUrlView(APIView):
         random_token = secrets.token_urlsafe(16)
         state_data = {
             'user_id': str(request.user.id),
+            'email': request.user.email,
             'token': random_token,
             'platform': platform
         }
@@ -74,21 +75,24 @@ class GetOAuthUrlView(APIView):
             # - pages_messaging: Read and send messages from Page inbox (for completeness)
             # - read_insights: Read Page and Instagram analytics (legacy, kept for compatibility)
             
-            # Request all permissions for both Facebook and Instagram
-            # Meta App Review requires all permissions to be requested together
+            # Minimal permissions for profile connection and posting
+            # Required for basic functionality:
+            # - pages_show_list: List Facebook Pages user manages
+            # - pages_manage_posts: Publish posts to Facebook Pages
+            # - instagram_basic: Access Instagram Business Account info
+            # - instagram_content_publish: Publish posts to Instagram
+            # Optional but useful:
+            # - pages_read_engagement: Read Page engagement stats (useful for analytics)
+            # - read_insights: Read Page and Instagram analytics (useful for analytics)
+            # - business_management: Access Business Manager accounts (often needed for Instagram)
             permissions_str = (
-                'pages_show_list,'  # List pages
-                'pages_manage_posts,'  # Publish to Facebook
-                'pages_read_engagement,'  # Page engagement stats
-                'instagram_basic,'  # Instagram account info
-                'instagram_content_publish,'  # Publish to Instagram
-                'instagram_manage_messages,'  # Read Instagram messages
-                'instagram_business_manage_messages,'  # Send Instagram messages
-                'business_management,'  # Business accounts
-                'ads_read,'  # Read ads data
-                'ads_management,'  # Manage ads
-                'pages_messaging,'  # Page messages (additional)
-                'read_insights'  # Legacy insights (additional)
+                'pages_show_list,'  # List pages (REQUIRED)
+                'pages_manage_posts,'  # Publish to Facebook (REQUIRED)
+                'pages_read_engagement,'  # Page engagement stats (OPTIONAL but useful)
+                'instagram_basic,'  # Instagram account info (REQUIRED)
+                'instagram_content_publish,'  # Publish to Instagram (REQUIRED)
+                'business_management,'  # Business accounts (OPTIONAL but often needed)
+                'read_insights'  # Analytics (OPTIONAL but useful)
             )
             
             auth_url = (
@@ -220,7 +224,7 @@ class OAuthCallbackView(APIView):
         if not code:
             return redirect(f"{settings.FRONTEND_URL}/social-accounts?error=no_code")
         
-        # Decode state token to get user_id
+        # Decode state token to get user_id and other info
         try:
             state_json = base64.urlsafe_b64decode(state.encode()).decode()
             state_data = json.loads(state_json)
@@ -240,13 +244,13 @@ class OAuthCallbackView(APIView):
         
         try:
             if platform in ['facebook', 'instagram']:
-                self._handle_meta_callback(request, platform, code, user_id)
+                self._handle_meta_callback(request, platform, code, user_id, state_data)
             elif platform == 'linkedin':
-                self._handle_linkedin_callback(request, platform, code, user_id)
+                self._handle_linkedin_callback(request, platform, code, user_id, state_data)
             elif platform == 'youtube':
-                self._handle_youtube_callback(request, platform, code, user_id)
+                self._handle_youtube_callback(request, platform, code, user_id, state_data)
             elif platform == 'tiktok':
-                self._handle_tiktok_callback(request, platform, code, user_id)
+                self._handle_tiktok_callback(request, platform, code, user_id, state_data)
             else:
                 return redirect(f"{settings.FRONTEND_URL}/social-accounts?error=unsupported_platform")
             
@@ -268,7 +272,7 @@ class OAuthCallbackView(APIView):
             error_details_encoded = urllib.parse.quote(error_details)
             return redirect(f"{settings.FRONTEND_URL}/social-accounts?error=callback_failed&details={error_details_encoded}")
     
-    def _handle_meta_callback(self, request, platform, code, user_id):
+    def _handle_meta_callback(self, request, platform, code, user_id, state_data=None):
         """Handle Facebook/Instagram OAuth callback"""
         
         # Exchange code for access token
@@ -308,7 +312,20 @@ class OAuthCallbackView(APIView):
         
         # Get user from user_id decoded from state token
         from accounts.models import User
-        user = User.objects.get(id=user_id)
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            # Fallback: try to get user by email from state (for safety if IDs changed)
+            email = None
+            if state_data and isinstance(state_data, dict):
+                email = state_data.get('email')
+            if email:
+                user = User.objects.filter(email=email).first()
+            else:
+                user = None
+            
+            if not user:
+                raise Exception("User matching query does not exist")
         
         # Get Facebook user info
         me_response = requests.get(
@@ -570,7 +587,7 @@ class OAuthCallbackView(APIView):
                     else:
                         print(f"❌ No Instagram account linked to page '{page_name}'")
     
-    def _handle_linkedin_callback(self, request, platform, code, user_id):
+    def _handle_linkedin_callback(self, request, platform, code, user_id, state_data=None):
         """Handle LinkedIn OAuth callback"""
         
         # Exchange code for access token
@@ -596,7 +613,18 @@ class OAuthCallbackView(APIView):
         
         # Get user from user_id decoded from state token
         from accounts.models import User
-        user = User.objects.get(id=user_id)
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            email = None
+            if state_data and isinstance(state_data, dict):
+                email = state_data.get('email')
+            if email:
+                user = User.objects.filter(email=email).first()
+            else:
+                user = None
+            if not user:
+                raise Exception("User matching query does not exist")
         
         # Get LinkedIn user info using OpenID Connect userinfo endpoint
         userinfo_response = requests.get(
@@ -647,10 +675,21 @@ class OAuthCallbackView(APIView):
         # 2. Request w_organization_social scope approval
         # 3. Once approved, uncomment the code below
     
-    def _handle_youtube_callback(self, request, platform, code, user_id):
+    def _handle_youtube_callback(self, request, platform, code, user_id, state_data=None):
         """Handle YouTube OAuth callback"""
         from accounts.models import User
-        user = User.objects.get(id=user_id)
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            email = None
+            if state_data and isinstance(state_data, dict):
+                email = state_data.get('email')
+            if email:
+                user = User.objects.filter(email=email).first()
+            else:
+                user = None
+            if not user:
+                raise Exception("User matching query does not exist")
         
         backend_url = settings.BACKEND_URL
         redirect_uri = f"{backend_url}/api/social-accounts/callback/{platform}/"
@@ -721,10 +760,21 @@ class OAuthCallbackView(APIView):
         account.save()
         print(f"✅ Saved YouTube account: {account.id} (created={created})")
     
-    def _handle_tiktok_callback(self, request, platform, code, user_id):
+    def _handle_tiktok_callback(self, request, platform, code, user_id, state_data=None):
         """Handle TikTok OAuth callback"""
         from accounts.models import User
-        user = User.objects.get(id=user_id)
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            email = None
+            if state_data and isinstance(state_data, dict):
+                email = state_data.get('email')
+            if email:
+                user = User.objects.filter(email=email).first()
+            else:
+                user = None
+            if not user:
+                raise Exception("User matching query does not exist")
         
         backend_url = settings.BACKEND_URL
         redirect_uri = f"{backend_url}/api/social-accounts/callback/{platform}/"
