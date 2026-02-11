@@ -374,10 +374,21 @@ def get_instagram_conversations(request):
         account_id = request.query_params.get('account_id')
         limit = int(request.query_params.get('limit', 25))
         
+        # If no account_id provided, try to find from connected accounts
+        if not account_id:
+            from social_accounts.models import SocialAccount
+            instagram_account = SocialAccount.objects.filter(
+                user=request.user,
+                platform='instagram',
+                is_active=True
+            ).first()
+            if instagram_account:
+                account_id = instagram_account.settings.get('ig_account_id') or instagram_account.platform_user_id
+        
         if not account_id:
             return Response({
                 'success': False,
-                'error': 'account_id tələb olunur'
+                'error': 'account_id tələb olunur. Zəhmət olmasa Instagram hesabını bağlayın.'
             }, status=status.HTTP_400_BAD_REQUEST)
         
         meta_service = get_meta_service(access_token)
