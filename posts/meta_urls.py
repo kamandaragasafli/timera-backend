@@ -5,6 +5,7 @@ Hər bir Meta icazəsi üçün endpoint-lər
 
 from django.urls import path
 from . import meta_views
+from . import webhook_views
 
 app_name = 'meta'
 
@@ -32,6 +33,14 @@ urlpatterns = [
     path('instagram/conversations/', meta_views.get_instagram_conversations, name='instagram_conversations'),
     path('instagram/conversations/<str:conversation_id>/messages/', meta_views.get_instagram_messages, name='instagram_messages'),
     path('instagram/messages/send/', meta_views.send_instagram_message, name='send_instagram_message'),
+    
+    # İcazə: pages_messaging
+    path('facebook/conversations/', meta_views.get_facebook_conversations, name='facebook_conversations'),
+    path('facebook/conversations/<str:conversation_id>/messages/', meta_views.get_facebook_messages, name='facebook_messages'),
+    path('facebook/messages/send/', meta_views.send_facebook_message, name='send_facebook_message'),
+    
+    # ==================== WEBHOOK ====================
+    path('webhook/', webhook_views.meta_webhook, name='meta_webhook'),
     
     # ==================== BUSINESS MANAGEMENT ====================
     # İcazə: business_management

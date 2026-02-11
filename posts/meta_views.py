@@ -473,6 +473,130 @@ def send_instagram_message(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+# ==================== FACEBOOK PAGES MESSAGES ====================
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_facebook_conversations(request):
+    """
+    Get Facebook Page conversations (messages)
+    İcazə: pages_messaging
+    
+    GET /api/posts/meta/facebook/conversations/
+    Query params:
+        - page_id: Facebook Page ID
+        - limit: Number of conversations (default: 25)
+    """
+    try:
+        access_token = get_user_meta_token(request.user, 'facebook')
+        if not access_token:
+            return Response({
+                'success': False,
+                'error': 'Facebook hesabı bağlanmayıb'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        page_id = request.query_params.get('page_id')
+        limit = int(request.query_params.get('limit', 25))
+        
+        if not page_id:
+            return Response({
+                'success': False,
+                'error': 'page_id tələb olunur'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        meta_service = get_meta_service(access_token)
+        result = meta_service.get_facebook_conversations(page_id, limit=limit)
+        
+        return Response(result, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"Error in get_facebook_conversations: {str(e)}", exc_info=True)
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_facebook_messages(request, conversation_id):
+    """
+    Get messages from Facebook Page conversation
+    İcazə: pages_messaging
+    
+    GET /api/posts/meta/facebook/conversations/<conversation_id>/messages/
+    Query params:
+        - limit: Number of messages (default: 50)
+    """
+    try:
+        access_token = get_user_meta_token(request.user, 'facebook')
+        if not access_token:
+            return Response({
+                'success': False,
+                'error': 'Facebook hesabı bağlanmayıb'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        limit = int(request.query_params.get('limit', 50))
+        
+        meta_service = get_meta_service(access_token)
+        result = meta_service.get_facebook_messages(conversation_id, limit=limit)
+        
+        return Response(result, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"Error in get_facebook_messages: {str(e)}", exc_info=True)
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_facebook_message(request):
+    """
+    Send message to Facebook user via Page
+    İcazə: pages_messaging
+    
+    POST /api/posts/meta/facebook/messages/send/
+    Body:
+        {
+            "page_id": "123456789",
+            "recipient_id": "987654321",
+            "message": "Hello!"
+        }
+    """
+    try:
+        access_token = get_user_meta_token(request.user, 'facebook')
+        if not access_token:
+            return Response({
+                'success': False,
+                'error': 'Facebook hesabı bağlanmayıb'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        page_id = request.data.get('page_id')
+        recipient_id = request.data.get('recipient_id')
+        message_text = request.data.get('message')
+        
+        if not page_id or not recipient_id or not message_text:
+            return Response({
+                'success': False,
+                'error': 'page_id, recipient_id və message tələb olunur'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        meta_service = get_meta_service(access_token)
+        result = meta_service.send_facebook_message(page_id, recipient_id, message_text)
+        
+        return Response(result, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"Error in send_facebook_message: {str(e)}", exc_info=True)
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 # ==================== BUSINESS MANAGEMENT ====================
 
 @api_view(['GET'])

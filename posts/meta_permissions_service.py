@@ -540,6 +540,133 @@ class MetaPermissionsService:
                 'error': str(e)
             }
     
+    # ==================== FACEBOOK PAGES MESSAGES ====================
+    
+    def get_facebook_conversations(self, page_id, limit=25):
+        """
+        Get Facebook Page conversations (messages)
+        İcazə: pages_messaging
+        
+        Args:
+            page_id: Facebook Page ID
+            limit: Number of conversations to retrieve
+            
+        Returns:
+            dict: List of conversations
+        """
+        try:
+            url = f"{self.BASE_URL}/{page_id}/conversations"
+            params = {
+                'access_token': self.access_token,
+                'fields': 'id,updated_time,message_count,unread_count,participants,can_reply',
+                'limit': limit
+            }
+            
+            logger.info(f"💬 Fetching Facebook Page conversations for page {page_id}")
+            response = requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            
+            result = response.json()
+            conversations = result.get('data', [])
+            
+            logger.info(f"✅ Retrieved {len(conversations)} Facebook conversations")
+            return {
+                'success': True,
+                'conversations': conversations,
+                'count': len(conversations)
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error fetching Facebook conversations: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'conversations': []
+            }
+    
+    def get_facebook_messages(self, conversation_id, limit=50):
+        """
+        Get messages from Facebook Page conversation
+        İcazə: pages_messaging
+        
+        Args:
+            conversation_id: Facebook conversation ID
+            limit: Number of messages to retrieve
+            
+        Returns:
+            dict: List of messages
+        """
+        try:
+            url = f"{self.BASE_URL}/{conversation_id}/messages"
+            params = {
+                'access_token': self.access_token,
+                'fields': 'id,created_time,from,to,message,attachments',
+                'limit': limit
+            }
+            
+            logger.info(f"📩 Fetching messages from Facebook conversation {conversation_id}")
+            response = requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            
+            result = response.json()
+            messages_data = result.get('data', [])
+            
+            logger.info(f"✅ Retrieved {len(messages_data)} Facebook messages")
+            return {
+                'success': True,
+                'messages': messages_data,
+                'count': len(messages_data)
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error fetching Facebook messages: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e),
+                'messages': []
+            }
+    
+    def send_facebook_message(self, page_id, recipient_id, message_text):
+        """
+        Send message to Facebook user via Page
+        İcazə: pages_messaging
+        
+        Args:
+            page_id: Facebook Page ID
+            recipient_id: Recipient's Facebook User ID (PSID - Page Scoped ID)
+            message_text: Message text
+            
+        Returns:
+            dict: Send result
+        """
+        try:
+            url = f"{self.BASE_URL}/{page_id}/messages"
+            data = {
+                'recipient': {'id': recipient_id},
+                'message': {'text': message_text},
+                'access_token': self.access_token
+            }
+            
+            logger.info(f"📤 Sending Facebook message to {recipient_id}")
+            response = requests.post(url, json=data, timeout=30)
+            response.raise_for_status()
+            
+            result = response.json()
+            message_id = result.get('message_id')
+            
+            logger.info(f"✅ Facebook message sent: {message_id}")
+            return {
+                'success': True,
+                'message_id': message_id
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error sending Facebook message: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     # ==================== BUSINESS_MANAGEMENT ====================
     
     def get_business_accounts(self, user_id='me'):

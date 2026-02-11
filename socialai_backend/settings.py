@@ -351,6 +351,7 @@ LOGGING = {
 # -------------------------
 META_APP_ID = config("META_APP_ID", default="")
 META_APP_SECRET = config("META_APP_SECRET", default="")
+META_WEBHOOK_VERIFY_TOKEN = config("META_WEBHOOK_VERIFY_TOKEN", default="timera_webhook_token")
 
 BACKEND_URL = config("BACKEND_URL", default="http://localhost:8000")
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")
