@@ -553,7 +553,8 @@ class OAuthCallbackView(APIView):
                                     'expires_at': timezone.now() + timedelta(seconds=expires_in),
                                     'settings': {
                                         'page_id': safe_page_id,
-                                        'page_name': safe_page_name
+                                        'page_name': safe_page_name,
+                                        'ig_account_id': ig_account_id[:100]  # ✅ Instagram Account ID
                                     }
                                 }
                             )
