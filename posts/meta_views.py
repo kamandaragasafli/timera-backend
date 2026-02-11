@@ -832,6 +832,86 @@ def update_campaign(request, campaign_id):
 
 # ==================== COMPREHENSIVE TEST ====================
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def test_instagram_messaging(request):
+    """
+    Test Instagram Messaging permissions for App Review
+    This endpoint demonstrates instagram_manage_messages permission usage
+    
+    GET /api/posts/meta/test/instagram-messaging/
+    Query params:
+        - account_id: Instagram Business Account ID (optional, will try to find)
+    """
+    try:
+        access_token = get_user_meta_token(request.user, 'facebook')
+        if not access_token:
+            return Response({
+                'success': False,
+                'error': 'Facebook hesabı bağlanmayıb'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        account_id = request.query_params.get('account_id')
+        
+        # If no account_id, try to find from connected accounts
+        if not account_id:
+            from social_accounts.models import SocialAccount
+            instagram_account = SocialAccount.objects.filter(
+                user=request.user,
+                platform='instagram',
+                is_active=True
+            ).first()
+            if instagram_account:
+                account_id = instagram_account.settings.get('ig_account_id') or instagram_account.platform_user_id
+        
+        if not account_id:
+            return Response({
+                'success': False,
+                'error': 'Instagram Business Account tapılmadı. Zəhmət olmasa hesabı bağlayın.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        meta_service = get_meta_service(access_token)
+        
+        # Test 1: Get Instagram conversations (READ)
+        logger.info(f"🧪 Testing Instagram conversations for account {account_id}")
+        conversations_result = meta_service.get_instagram_conversations(account_id, limit=10)
+        
+        # Test 2: Get messages from first conversation (if exists)
+        messages_result = None
+        if conversations_result['success'] and conversations_result.get('conversations'):
+            first_conv_id = conversations_result['conversations'][0]['id']
+            logger.info(f"🧪 Testing Instagram messages for conversation {first_conv_id}")
+            messages_result = meta_service.get_instagram_messages(first_conv_id, limit=10)
+        
+        return Response({
+            'success': True,
+            'permission': 'instagram_manage_messages',
+            'account_id': account_id,
+            'tests': {
+                'get_conversations': {
+                    'success': conversations_result['success'],
+                    'count': conversations_result.get('count', 0),
+                    'error': conversations_result.get('error'),
+                    'description': 'Reading Instagram Direct message conversations'
+                },
+                'get_messages': {
+                    'success': messages_result['success'] if messages_result else False,
+                    'count': messages_result.get('count', 0) if messages_result else 0,
+                    'error': messages_result.get('error') if messages_result else None,
+                    'description': 'Reading messages from Instagram conversation'
+                }
+            },
+            'note': 'This demonstrates instagram_manage_messages permission usage for Meta App Review'
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"Error in test_instagram_messaging: {str(e)}", exc_info=True)
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def test_all_permissions(request):

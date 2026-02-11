@@ -455,17 +455,31 @@ class MetaPermissionsService:
             
         except requests.exceptions.HTTPError as e:
             error_msg = str(e)
+            error_code = None
             if hasattr(e.response, 'text'):
                 try:
                     error_data = e.response.json()
-                    error_msg = error_data.get('error', {}).get('message', error_msg)
+                    error_info = error_data.get('error', {})
+                    error_msg = error_info.get('message', error_msg)
+                    error_code = error_info.get('code')
+                    
+                    # Special handling for capability error
+                    if error_code == 3 or 'capability' in error_msg.lower():
+                        error_msg = (
+                            "Instagram Messaging capability is not enabled for this app. "
+                            "Please enable it in Meta App Dashboard: "
+                            "Settings > Basic > Add Platform > Instagram Messaging. "
+                            "Then submit instagram_manage_messages permission for App Review."
+                        )
                 except:
                     error_msg = e.response.text[:200]
-            logger.error(f"❌ Error fetching Instagram conversations: {error_msg}")
+            logger.error(f"❌ Error fetching Instagram conversations: {error_msg} (Code: {error_code})")
             return {
                 'success': False,
                 'error': error_msg,
-                'conversations': []
+                'error_code': error_code,
+                'conversations': [],
+                'help': 'Enable Instagram Messaging capability in Meta App Dashboard and request instagram_manage_messages permission'
             }
         except Exception as e:
             logger.error(f"❌ Error fetching Instagram conversations: {str(e)}", exc_info=True)

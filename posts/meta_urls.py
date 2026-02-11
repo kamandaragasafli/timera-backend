@@ -58,5 +58,6 @@ urlpatterns = [
     
     # ==================== TEST ====================
     path('test-permissions/', meta_views.test_all_permissions, name='test_permissions'),
+    path('test/instagram-messaging/', meta_views.test_instagram_messaging, name='test_instagram_messaging'),
 ]
 
