@@ -430,17 +430,21 @@ class MetaPermissionsService:
             url = f"{self.BASE_URL}/{instagram_account_id}/conversations"
             params = {
                 'access_token': self.access_token,
-                'fields': 'id,updated_time,message_count,unread_count,participants',
-                'limit': limit,
-                'platform': 'instagram'
+                'fields': 'id,updated_time,message_count,unread_count,participants{id,username,name}',
+                'limit': limit
             }
             
-            logger.info(f"💬 Fetching Instagram conversations")
+            logger.info(f"💬 Fetching Instagram conversations for account {instagram_account_id}")
             response = requests.get(url, params=params, timeout=30)
             response.raise_for_status()
             
             result = response.json()
             conversations = result.get('data', [])
+            
+            # Add snippet field if not present (for preview)
+            for conv in conversations:
+                if 'snippet' not in conv:
+                    conv['snippet'] = ''
             
             logger.info(f"✅ Retrieved {len(conversations)} Instagram conversations")
             return {
@@ -449,8 +453,22 @@ class MetaPermissionsService:
                 'count': len(conversations)
             }
             
+        except requests.exceptions.HTTPError as e:
+            error_msg = str(e)
+            if hasattr(e.response, 'text'):
+                try:
+                    error_data = e.response.json()
+                    error_msg = error_data.get('error', {}).get('message', error_msg)
+                except:
+                    error_msg = e.response.text[:200]
+            logger.error(f"❌ Error fetching Instagram conversations: {error_msg}")
+            return {
+                'success': False,
+                'error': error_msg,
+                'conversations': []
+            }
         except Exception as e:
-            logger.error(f"❌ Error fetching Instagram conversations: {str(e)}")
+            logger.error(f"❌ Error fetching Instagram conversations: {str(e)}", exc_info=True)
             return {
                 'success': False,
                 'error': str(e),
@@ -470,10 +488,10 @@ class MetaPermissionsService:
             dict: List of messages
         """
         try:
-            url = f"{self.BASE_URL}/{conversation_id}"
+            url = f"{self.BASE_URL}/{conversation_id}/messages"
             params = {
                 'access_token': self.access_token,
-                'fields': 'messages{id,created_time,from,to,message}',
+                'fields': 'id,created_time,from{id,username,name},message',
                 'limit': limit
             }
             
@@ -482,7 +500,7 @@ class MetaPermissionsService:
             response.raise_for_status()
             
             result = response.json()
-            messages_data = result.get('messages', {}).get('data', [])
+            messages_data = result.get('data', [])
             
             logger.info(f"✅ Retrieved {len(messages_data)} messages")
             return {
@@ -491,8 +509,22 @@ class MetaPermissionsService:
                 'count': len(messages_data)
             }
             
+        except requests.exceptions.HTTPError as e:
+            error_msg = str(e)
+            if hasattr(e.response, 'text'):
+                try:
+                    error_data = e.response.json()
+                    error_msg = error_data.get('error', {}).get('message', error_msg)
+                except:
+                    error_msg = e.response.text[:200]
+            logger.error(f"❌ Error fetching Instagram messages: {error_msg}")
+            return {
+                'success': False,
+                'error': error_msg,
+                'messages': []
+            }
         except Exception as e:
-            logger.error(f"❌ Error fetching Instagram messages: {str(e)}")
+            logger.error(f"❌ Error fetching Instagram messages: {str(e)}", exc_info=True)
             return {
                 'success': False,
                 'error': str(e),
